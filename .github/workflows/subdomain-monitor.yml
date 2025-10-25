@@ -1,4 +1,4 @@
-name: Subdomain Monitor (orgs → Discord)
+fname: Subdomain Monitor (orgs → Discord)
 
 permissions:
   contents: write        # allows pushing commits, updating files
@@ -75,10 +75,15 @@ jobs:
           rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
           echo "[+] httpx-pd ready"
 
-      - name: Export PDCP API key (for chaos)
-        if: ${{ secrets.PDCP_API_KEY != '' }}
-        run: |
-          echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
+        - name: Export PDCP API key (robust)
+          run: |
+          if [ -n "${{ secrets.PDCP_API_KEY }}" ]; then
+            echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
+            echo "PDCP_API_KEY exported"
+          else
+            echo "PDCP_API_KEY not set — skipping chaos client"
+          fi
+
 
       - name: Run subdomain enumeration pipeline
         id: enum

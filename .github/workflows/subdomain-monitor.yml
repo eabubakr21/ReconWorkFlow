@@ -78,7 +78,7 @@ jobs:
       - name: Export PDCP API key (for chaos)
         if: ${{ secrets.PDCP_API_KEY != '' }}
         run: |
-          echo "export PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
+          echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
 
       - name: Run subdomain enumeration pipeline
         id: enum

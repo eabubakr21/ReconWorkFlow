@@ -86,44 +86,50 @@ jobs:
 
 
       - name: Run subdomain enumeration pipeline
-        id: enum
-        run: |
-          set -eux
-          # prepare files
-          ORG=${{ matrix.org }}
-          TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
-          CUR_DIR="data/current/${ORG}"
-          mkdir -p "$CUR_DIR"
-          # run subfinder (list input)
-          subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
-          # findomain
-          findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
-          # assetfinder from wildcards file
-          cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
-          # chaos client (requires PDCP_API_KEY present in env)
-          if [ -n "${PDCP_API_KEY:-}" ]; then
-            chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
-          else
-            echo "[!] PDCP_API_KEY not set; skipping chaos"
-          fi
-          # optional subenum (if available in PATH)
-          if command -v subenum >/dev/null 2>&1; then
-            subenum -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
-          else
-            echo "[!] subenum not installed; skipping subenum step"
-          fi
-          # merge results, dedupe
-          cat "$CUR_DIR"/*.txt 2>/dev/null || true
-          cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
-          # exclude telekom reverse wildcard if telekom org
-          if [ "$ORG" = "telekom" ]; then
-            grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/candidates.filtered.txt" || true
-            mv "$CUR_DIR/candidates.filtered.txt" "$CUR_DIR/candidates.txt" || true
-          fi
-          echo "candidates saved to $CUR_DIR/candidates.txt"
-          wc -l "$CUR_DIR/candidates.txt" || true
-          # save artifact path for next steps
-          echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
+            id: enum
+            run: |
+              set -eux
+              ORG=${{ matrix.org }}
+              TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+              CUR_DIR="data/current/${ORG}"
+              mkdir -p "$CUR_DIR"
+    
+              # run subfinder
+              subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
+
+              # findomain
+              findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
+
+              # assetfinder
+              cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
+
+              # export chaos key and run chaos
+              export PDCP_API_KEY=907560e1-54a0-452e-a6db-3c21fecc2288
+              echo "PDCP_API_KEY exported"
+              chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+  
+              # subenum (run after chaos)
+              if [ ! -d "SubEnum" ]; then
+                git clone https://github.com/bing0o/SubEnum.git
+                cd SubEnum
+                chmod +x setup.sh
+                ./setup.sh
+                cd ..
+              fi
+              ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
+
+              # merge & dedupe results
+              cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
+
+              # exclude reverse wildcard (telekom specific)
+              if [ "$ORG" = "telekom" ]; then
+                grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
+                mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
+              fi
+
+              echo "candidates saved to $CUR_DIR/candidates.txt"
+              wc -l "$CUR_DIR/candidates.txt" || true
+              echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
 
       - name: Probe live subdomains with httpx-pd
         id: probe

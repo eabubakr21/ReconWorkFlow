@@ -86,8 +86,8 @@ jobs:
 
 
       - name: Run subdomain enumeration pipeline
-            id: enum
-            run: |
+        id: enum
+        run: |
               set -eux
               ORG=${{ matrix.org }}
               TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")

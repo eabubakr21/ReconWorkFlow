@@ -75,8 +75,8 @@ jobs:
           rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
           echo "[+] httpx-pd ready"
 
-        - name: Export PDCP API key (robust)
-          run: |
+      - name: Export PDCP API key (robust)
+        run: |
           if [ -n "${{ secrets.PDCP_API_KEY }}" ]; then
             echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
             echo "PDCP_API_KEY exported"

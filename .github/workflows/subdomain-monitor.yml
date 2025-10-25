@@ -1,4 +1,4 @@
-fname: Subdomain Monitor (orgs → Discord)
+name: Subdomain Monitor (orgs → Discord)
 
 permissions:
   contents: write        # allows pushing commits, updating files

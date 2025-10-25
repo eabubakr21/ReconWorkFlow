@@ -1,5 +1,9 @@
 name: Subdomain Monitor (orgs → Discord)
 
+permissions:
+  contents: write        # allows pushing commits, updating files
+  id-token: write        # optional if you use OIDC (not needed for push)
+
 on:
   schedule:
     - cron: "0 */6 * * *"   # run every 6 hours (adjust as needed)
@@ -19,6 +23,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true   # default is true; ensures git uses GITHUB_TOKEN
+          fetch-depth: 0              # optional: full history if you need it
 
       - name: Ensure directories exist
         run: |

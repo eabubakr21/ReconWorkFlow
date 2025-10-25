@@ -1,0 +1,213 @@
+name: Subdomain Monitor (orgs → Discord)
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # run every 6 hours (adjust as needed)
+  workflow_dispatch:        # allow manual runs
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        org: [ "bitdefender", "telekom" ]
+
+    env:
+      # default ports for httpx-pd
+      HTTPX_PORTS: "80,443,8080,8000,8888,8443,9443"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Ensure directories exist
+        run: |
+          mkdir -p data/wildcards data/current data/previous data/new
+
+      - name: Copy wildcards into working file
+        run: |
+          cp data/wildcards/${{ matrix.org }}.txt wildcards.txt
+
+      - name: Install OS deps & unzip tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip wget python3-pip
+
+      - name: Setup Go (for projectdiscovery & tomnomnom tools)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Install required Go tools and pip httpx
+        run: |
+          export PATH=$PATH:$HOME/go/bin
+          go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install -v github.com/projectdiscovery/chaos-client/cmd/chaos@latest
+          go install -v github.com/tomnomnom/anew@latest
+          go install -v github.com/tomnomnom/assetfinder@latest
+          pip3 install 'httpx[cli]' || true
+
+      - name: Install findomain (binary)
+        run: |
+          curl -L -o findomain.zip "https://github.com/findomain/findomain/releases/latest/download/findomain-linux-i386.zip"
+          unzip -o findomain.zip
+          chmod +x findomain
+          sudo mv findomain /usr/bin/findomain || sudo mv findomain /usr/local/bin/findomain
+          rm -f findomain.zip
+
+      - name: Install httpx (ProjectDiscovery linux_amd64) and move to httpx-pd
+        run: |
+          echo "[*] Downloading latest httpx release..."
+          URL=$(curl -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest \
+            | grep "browser_download_url.*linux_amd64.zip" \
+            | cut -d '"' -f 4)
+          wget -q "$URL" -O httpx_latest.zip
+          unzip -o httpx_latest.zip
+          chmod +x httpx
+          sudo mv httpx /usr/local/bin/httpx-pd
+          rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
+          echo "[+] httpx-pd ready"
+
+      - name: Export PDCP API key (for chaos)
+        if: ${{ secrets.PDCP_API_KEY != '' }}
+        run: |
+          echo "export PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Run subdomain enumeration pipeline
+        id: enum
+        run: |
+          set -eux
+          # prepare files
+          ORG=${{ matrix.org }}
+          TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+          CUR_DIR="data/current/${ORG}"
+          mkdir -p "$CUR_DIR"
+          # run subfinder (list input)
+          subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
+          # findomain
+          findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
+          # assetfinder from wildcards file
+          cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
+          # chaos client (requires PDCP_API_KEY present in env)
+          if [ -n "${PDCP_API_KEY:-}" ]; then
+            chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+          else
+            echo "[!] PDCP_API_KEY not set; skipping chaos"
+          fi
+          # optional subenum (if available in PATH)
+          if command -v subenum >/dev/null 2>&1; then
+            subenum -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
+          else
+            echo "[!] subenum not installed; skipping subenum step"
+          fi
+          # merge results, dedupe
+          cat "$CUR_DIR"/*.txt 2>/dev/null || true
+          cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
+          # exclude telekom reverse wildcard if telekom org
+          if [ "$ORG" = "telekom" ]; then
+            grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/candidates.filtered.txt" || true
+            mv "$CUR_DIR/candidates.filtered.txt" "$CUR_DIR/candidates.txt" || true
+          fi
+          echo "candidates saved to $CUR_DIR/candidates.txt"
+          wc -l "$CUR_DIR/candidates.txt" || true
+          # save artifact path for next steps
+          echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
+
+      - name: Probe live subdomains with httpx-pd
+        id: probe
+        run: |
+          set -eux
+          ORG=${{ matrix.org }}
+          CUR="data/current/${ORG}/candidates.txt"
+          LIVE="data/current/${ORG}/live.txt"
+          touch $LIVE
+          if [ -s "$CUR" ]; then
+            cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -o "$LIVE" || true
+          else
+            echo "[!] no candidates"
+          fi
+          echo "LIVE=$LIVE" >> $GITHUB_OUTPUT
+          wc -l "$LIVE" || true
+
+      - name: Compare with previous and generate new list
+        id: compare
+        run: |
+          set -eux
+          ORG=${{ matrix.org }}
+          PREV="data/previous/${ORG}.txt"
+          CUR="data/current/${ORG}/live.txt"
+          NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
+          touch "$PREV"
+          # differences: lines in CUR but not in PREV
+          comm -13 <(sort "$PREV") <(sort "$CUR") > "$NEW_FILE" || true
+          # cleanup blank lines
+          sed -i '/^\s*$/d' "$NEW_FILE" || true
+          NEW_COUNT=$(wc -l < "$NEW_FILE" || echo 0)
+          echo "NEW_FILE=$NEW_FILE" >> $GITHUB_OUTPUT
+          echo "NEW_COUNT=$NEW_COUNT" >> $GITHUB_OUTPUT
+          echo "NEW_COUNT=$NEW_COUNT"
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "No new live subdomains found."
+          else
+            echo "Found $NEW_COUNT new live subdomains"
+            head -n 50 "$NEW_FILE" || true
+          fi
+
+      - name: Commit new results & update previous (if any)
+        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+        run: |
+          set -eux
+          ORG=${{ matrix.org }}
+          PREV="data/previous/${ORG}.txt"
+          CUR="data/current/${ORG}/live.txt"
+          git config user.name "subdomain-bot"
+          git config user.email "bot@example.com"
+          cp "$CUR" "$PREV"
+          git add "$PREV" "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
+          git commit -m "Update ${ORG} live subdomains - run ${GITHUB_RUN_ID}" || true
+          git push || echo "Push failed; ensure repository has write permissions for the action"
+
+      - name: Post new subdomains to Discord (embed, batched)
+        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+        run: |
+          set -eux
+          ORG=${{ matrix.org }}
+          NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
+          COUNT=${{ steps.compare.outputs.NEW_COUNT }}
+          # pick the webhook depending on org
+          if [ "$ORG" = "bitdefender" ]; then
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
+          else
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
+          fi
+          # build items (limit to 15)
+          ITEMS=$(head -n 15 "$NEW_FILE" | jq -R . | jq -s .)
+          ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
+          DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
+          EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
+                --arg desc "$DESCRIPTION" \
+                --arg items "$(head -n 15 "$NEW_FILE" | paste -s -d'\n' - | sed 's/"/\\"/g')" \
+                '{
+                  "embeds":[
+                    {
+                      "title":$title,
+                      "description":$desc,
+                      "fields":[ {"name":"New (first 15)","value":$items,"inline":false} ],
+                      "footer":{"text":"Run via GitHub Actions"} 
+                    }
+                  ]
+                }')
+          # simple rate-limit backoff (avoid bursts)
+          sleep $(( (RANDOM % 3) + 1 ))
+          curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+
+      - name: Upload new file as artifact (optional backup)
+        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-${{ matrix.org }}-${{ github.run_id }}
+          path: ${{ steps.compare.outputs.NEW_FILE }}
+
+      - name: Done - summary
+        run: |
+          echo "job finished for ${{ matrix.org }} (run $GITHUB_RUN_ID)"

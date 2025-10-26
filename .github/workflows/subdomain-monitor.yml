@@ -84,12 +84,10 @@ jobs:
           ORG=${{ matrix.org }}
           CUR_DIR="data/current/${ORG}"
           mkdir -p "$CUR_DIR"
-
           subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
           findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
           cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
           chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
-
           if [ ! -d "SubEnum" ]; then
             git clone https://github.com/bing0o/SubEnum.git
             cd SubEnum
@@ -98,15 +96,12 @@ jobs:
             cd ..
           fi
           ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
-
           cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
             | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
-
           if [ "$ORG" = "telekom" ]; then
             grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
             mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
           fi
-
           echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
 
       - name: Probe live subdomains
@@ -144,10 +139,8 @@ jobs:
           ORG=${{ matrix.org }}
           PREV="data/previous/${ORG}.txt"
           CUR="data/current/${ORG}/live.txt"
-
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-
           git pull --rebase origin main || true
           cp "$CUR" "$PREV"
           git add "$PREV" "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
@@ -161,16 +154,13 @@ jobs:
           ORG=${{ matrix.org }}
           NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
           COUNT=${{ steps.compare.outputs.NEW_COUNT }}
-
           if [ "$ORG" = "bitdefender" ]; then
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
           else
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
-
           ITEMS=$(head -n 15 "$NEW_FILE" | paste -s -d '\n' - | sed 's/"/\\"/g')
           DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
-
           EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
                         --arg desc "$DESCRIPTION" \
                         --arg items "$ITEMS" \
@@ -186,7 +176,6 @@ jobs:
                             }
                           ]
                         }')
-
           sleep $(( (RANDOM % 3) + 1 ))
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
 
@@ -198,7 +187,6 @@ jobs:
           CUR="data/current/${ORG}/live.txt"
           COUNT=$(wc -l < "$CUR" || echo 0)
           DESC="Full list of live subdomains for ${ORG} (${COUNT} total)."
-
           EMBED=$(jq -n --arg title "Archive — ${ORG} (${COUNT})" \
                         --arg desc "$DESC" \
                         '{
@@ -210,7 +198,6 @@ jobs:
                             }
                           ]
                         }')
-
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || true
 
       - name: Upload new subdomain file as artifact

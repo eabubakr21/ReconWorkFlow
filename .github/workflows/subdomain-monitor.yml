@@ -84,19 +84,14 @@ jobs:
           ORG=${{ matrix.org }}
           CUR_DIR="data/current/${ORG}"
           mkdir -p "$CUR_DIR"
-
           # Subfinder
           subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
-
           # Findomain
           findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
-
           # Assetfinder
           cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
-
           # Chaos
           chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
-
           # SubEnum
           if [ ! -d "SubEnum" ]; then
             git clone https://github.com/bing0o/SubEnum.git
@@ -106,17 +101,14 @@ jobs:
             cd ..
           fi
           ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
-
           # Merge all results
           cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
             | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
-
           # Telekom exclusion
           if [ "$ORG" = "telekom" ]; then
             grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
             mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
           fi
-
           echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
 
       - name: Probe live subdomains
@@ -156,9 +148,7 @@ jobs:
           CUR="data/current/${ORG}/live.txt"
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-
           git pull --rebase origin main || true
-
           cp "$CUR" "$PREV"
           git add "$PREV" "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
           git commit -m "Update ${ORG} live subdomains - run ${GITHUB_RUN_ID}" || true
@@ -176,10 +166,8 @@ jobs:
           else
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
-
           ITEMS=$(head -n 15 "$NEW_FILE" | paste -s -d'\n' - | sed 's/"/\\"/g')
           DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
-
           EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
                 --arg desc "$DESCRIPTION" \
                 --arg items "$ITEMS" \
@@ -193,7 +181,6 @@ jobs:
                     }
                   ]
                 }')
-
           sleep $(( (RANDOM % 3) + 1 ))
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
 

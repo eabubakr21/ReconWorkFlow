@@ -190,6 +190,9 @@ jobs:
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
           
+          # Pull latest changes before making our own
+          git pull --rebase origin main || true
+          
           # Always update the previous file with current results
           cp "$CUR" "$PREV"
           git add "$PREV"
@@ -241,6 +244,7 @@ jobs:
         run: |
           set -eux
           ORG=${{ matrix.org }}
+          # Use the dedicated archive webhook
           WEBHOOK="${{ secrets.DISCORD_WEBHOOK_ARCHIVE }}"
           CUR="data/current/${ORG}/live.txt"
           COUNT=$(wc -l < "$CUR" || echo 0)

@@ -1,13 +1,13 @@
 name: Subdomain Monitor (orgs → Discord)
 
 permissions:
-  contents: write
-  id-token: write
+  contents: write        # allows pushing commits, updating files
+  id-token: write        # optional if you use OIDC (not needed for push)
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # Run every 6 hours
-  workflow_dispatch:
+    - cron: "0 */6 * * *"   # run every 6 hours (adjust as needed)
+  workflow_dispatch:        # allow manual runs
 
 jobs:
   monitor:
@@ -17,33 +17,35 @@ jobs:
         org: [ "bitdefender", "telekom" ]
 
     env:
+      # default ports for httpx-pd
       HTTPX_PORTS: "80,443,8080,8000,8888,8443,9443"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
-          fetch-depth: 0
+          persist-credentials: true   # default is true; ensures git uses GITHUB_TOKEN
+          fetch-depth: 0              # optional: full history if you need it
 
       - name: Ensure directories exist
         run: |
           mkdir -p data/wildcards data/current data/previous data/new
 
-      - name: Copy wildcard file
-        run: cp "data/wildcards/${{ matrix.org }}.txt" wildcards.txt
+      - name: Copy wildcards into working file
+        run: |
+          cp data/wildcards/${{ matrix.org }}.txt wildcards.txt
 
-      - name: Install OS dependencies
+      - name: Install OS deps & unzip tools
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip wget python3-pip jq
 
-      - name: Setup Go
+      - name: Setup Go (for projectdiscovery & tomnomnom tools)
         uses: actions/setup-go@v5
         with:
           go-version: "1.21"
 
-      - name: Install Go and Python tools
+      - name: Install required Go tools and pip httpx
         run: |
           export PATH=$PATH:$HOME/go/bin
           go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
@@ -52,15 +54,15 @@ jobs:
           go install -v github.com/tomnomnom/assetfinder@latest
           pip3 install 'httpx[cli]' || true
 
-      - name: Install Findomain
+      - name: Install findomain (binary)
         run: |
           curl -L -o findomain.zip "https://github.com/findomain/findomain/releases/latest/download/findomain-linux-i386.zip"
           unzip -o findomain.zip
           chmod +x findomain
-          sudo mv findomain /usr/local/bin/findomain
+          sudo mv findomain /usr/bin/findomain || sudo mv findomain /usr/local/bin/findomain
           rm -f findomain.zip
 
-      - name: Install httpx (ProjectDiscovery)
+      - name: Install httpx (ProjectDiscovery linux_amd64) and move to httpx-pd
         run: |
           echo "[*] Downloading latest httpx release..."
           URL=$(curl -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest \
@@ -71,53 +73,86 @@ jobs:
           chmod +x httpx
           sudo mv httpx /usr/local/bin/httpx-pd
           rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
+          echo "[+] httpx-pd ready"
 
-      - name: Export PDCP API Key
+      - name: Export PDCP API key (robust)
         run: |
-          export PDCP_API_KEY=907560e1-54a0-452e-a6db-3c21fecc2288
-          echo "PDCP_API_KEY exported"
+          if [ -n "${{ secrets.PDCP_API_KEY }}" ]; then
+            echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
+            echo "PDCP_API_KEY exported"
+          else
+            echo "PDCP_API_KEY not set — skipping chaos client"
+          fi
 
       - name: Run subdomain enumeration pipeline
         id: enum
         run: |
-          set -eux
-          ORG=${{ matrix.org }}
-          CUR_DIR="data/current/${ORG}"
-          mkdir -p "$CUR_DIR"
-          subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
-          findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
-          cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
-          chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
-          if [ ! -d "SubEnum" ]; then
-            git clone https://github.com/bing0o/SubEnum.git
-            cd SubEnum
-            chmod +x setup.sh
-            ./setup.sh
-            cd ..
-          fi
-          ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
-          cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-            | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
-          if [ "$ORG" = "telekom" ]; then
-            grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
-            mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
-          fi
-          echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
+              set -eux
+              ORG=${{ matrix.org }}
+              TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+              CUR_DIR="data/current/${ORG}"
+              mkdir -p "$CUR_DIR"
+    
+              # run subfinder
+              subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
 
-      - name: Probe live subdomains
+              # findomain
+              findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
+
+              # assetfinder
+              cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
+
+              # export chaos key and run chaos
+              export PDCP_API_KEY=907560e1-54a0-452e-a6db-3c21fecc2288
+              echo "PDCP_API_KEY exported"
+              chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+  
+              # subenum (run after chaos)
+              if [ ! -d "SubEnum" ]; then
+                git clone https://github.com/bing0o/SubEnum.git
+                cd SubEnum
+                chmod +x setup.sh
+                ./setup.sh
+                cd ..
+              fi
+              ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
+
+              # merge & dedupe results
+              cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
+
+              # exclude reverse wildcard (telekom specific)
+              if [ "$ORG" = "telekom" ]; then
+                grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
+                mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
+              fi
+
+              # exclude out-of-scope subdomains for bitdefender
+              if [ "$ORG" = "bitdefender" ]; then
+                grep -v -E "(lsems\.gravityzone|ssems\.gravityzone|community|resellerportal|stats|sstats|brand|partner-marketing|businessinsights|businessemail|businessresources|oemhub|oemresources|crp|telcosuccess|demo)\.bitdefender\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
+                mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
+              fi
+
+              echo "candidates saved to $CUR_DIR/candidates.txt"
+              wc -l "$CUR_DIR/candidates.txt" || true
+              echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
+
+      - name: Probe live subdomains with httpx-pd
         id: probe
         run: |
           set -eux
           ORG=${{ matrix.org }}
           CUR="data/current/${ORG}/candidates.txt"
           LIVE="data/current/${ORG}/live.txt"
-          touch "$LIVE"
+          touch $LIVE
           if [ -s "$CUR" ]; then
             cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -o "$LIVE" || true
+          else
+            echo "[!] no candidates"
           fi
           echo "LIVE=$LIVE" >> $GITHUB_OUTPUT
+          wc -l "$LIVE" || true
 
-      - name: Compare with previous results
+      - name: Compare with previous and generate new list
         id: compare
         run: |
           set -eux
@@ -125,15 +160,28 @@ jobs:
           PREV="data/previous/${ORG}.txt"
           CUR="data/current/${ORG}/live.txt"
           NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
-          touch "$PREV"
+          
+          # Create previous file if it doesn't exist
+          if [ ! -f "$PREV" ]; then
+            touch "$PREV"
+          fi
+          
+          # differences: lines in CUR but not in PREV
           comm -13 <(sort "$PREV") <(sort "$CUR") > "$NEW_FILE" || true
+          # cleanup blank lines
           sed -i '/^\s*$/d' "$NEW_FILE" || true
           NEW_COUNT=$(wc -l < "$NEW_FILE" || echo 0)
           echo "NEW_FILE=$NEW_FILE" >> $GITHUB_OUTPUT
           echo "NEW_COUNT=$NEW_COUNT" >> $GITHUB_OUTPUT
+          echo "NEW_COUNT=$NEW_COUNT"
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "No new live subdomains found."
+          else
+            echo "Found $NEW_COUNT new live subdomains"
+            head -n 50 "$NEW_FILE" || true
+          fi
 
-      - name: Commit and update previous list
-        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+      - name: Commit new results & update previous (if any)
         run: |
           set -eux
           ORG=${{ matrix.org }}
@@ -141,41 +189,51 @@ jobs:
           CUR="data/current/${ORG}/live.txt"
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-          git pull --rebase origin main || true
+          
+          # Always update the previous file with current results
           cp "$CUR" "$PREV"
-          git add "$PREV" "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
-          git commit -m "Update ${ORG} live subdomains - run ${GITHUB_RUN_ID}" || true
-          git push origin main || echo "Push failed; skipping update"
+          git add "$PREV"
+          
+          # Only add and commit new file if there are new subdomains
+          if [ -s "data/new/${ORG}-${GITHUB_RUN_ID}.txt" ]; then
+            git add "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
+            git commit -m "Update ${ORG} live subdomains - run ${GITHUB_RUN_ID}" || true
+          else
+            git commit -m "Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
+          fi
+          git push || echo "Push failed; ensure repository has write permissions for the action"
 
-      - name: Post new subdomains to Discord
+      - name: Post new subdomains to Discord (embed, batched)
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
         run: |
           set -eux
           ORG=${{ matrix.org }}
           NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
           COUNT=${{ steps.compare.outputs.NEW_COUNT }}
+          # pick the webhook depending on org
           if [ "$ORG" = "bitdefender" ]; then
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
           else
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
-          ITEMS=$(head -n 15 "$NEW_FILE" | paste -s -d '\n' - | sed 's/"/\\"/g')
+          # build items (limit to 15)
+          ITEMS=$(head -n 15 "$NEW_FILE" | jq -R . | jq -s .)
+          ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
           DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
           EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
-                        --arg desc "$DESCRIPTION" \
-                        --arg items "$ITEMS" \
-                        '{
-                          "embeds": [
-                            {
-                              "title": $title,
-                              "description": $desc,
-                              "fields": [
-                                {"name": "New (first 15)", "value": $items, "inline": false}
-                              ],
-                              "footer": {"text": "GitHub Actions"}
-                            }
-                          ]
-                        }')
+                --arg desc "$DESCRIPTION" \
+                --arg items "$(head -n 15 "$NEW_FILE" | paste -s -d'\n' - | sed 's/"/\\"/g')" \
+                '{
+                  "embeds":[
+                    {
+                      "title":$title,
+                      "description":$desc,
+                      "fields":[ {"name":"New (first 15)","value":$items,"inline":false} ],
+                      "footer":{"text":"Run via GitHub Actions"} 
+                    }
+                  ]
+                }')
+          # simple rate-limit backoff (avoid bursts)
           sleep $(( (RANDOM % 3) + 1 ))
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
 
@@ -200,12 +258,13 @@ jobs:
                         }')
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || true
 
-      - name: Upload new subdomain file as artifact
+      - name: Upload new file as artifact (optional backup)
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
         uses: actions/upload-artifact@v4
         with:
           name: new-${{ matrix.org }}-${{ github.run_id }}
           path: ${{ steps.compare.outputs.NEW_FILE }}
 
-      - name: Done summary
-        run: echo "Finished run for ${{ matrix.org }} (Run ID: $GITHUB_RUN_ID)"
+      - name: Done - summary
+        run: |
+          echo "job finished for ${{ matrix.org }} (run $GITHUB_RUN_ID)"

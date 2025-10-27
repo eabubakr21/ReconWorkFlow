@@ -1,12 +1,13 @@
-name: Subdomain Monitor (orgs → Discord)
+name: Subdomain Monitor (orgs → Discord + Nuclei Scan)
 
 permissions:
   contents: write        # allows pushing commits, updating files
   id-token: write        # optional if you use OIDC (not needed for push)
+  actions: read          # required to download artifacts between jobs
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # run every 6 hours (adjust as needed)
+    - cron: "0 */6 * * *"   # run every 6 hours
   workflow_dispatch:        # allow manual runs
 
 jobs:
@@ -24,8 +25,8 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          persist-credentials: true   # default is true; ensures git uses GITHUB_TOKEN
-          fetch-depth: 0              # optional: full history if you need it
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Ensure directories exist
         run: |
@@ -146,6 +147,8 @@ jobs:
           touch $LIVE
           if [ -s "$CUR" ]; then
             cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -o "$LIVE" || true
+            # *** UPDATE 1: Strip ports to de-duplicate subdomains found on multiple ports ***
+            sed -i 's/:.*//' "$LIVE"
           else
             echo "[!] no candidates"
           fi
@@ -193,7 +196,7 @@ jobs:
           # Pull latest changes before making our own
           git pull --rebase origin main || true
           
-          # Always update the previous file with current results
+          # Always update the previous file with current results for the next run
           cp "$CUR" "$PREV"
           git add "$PREV"
           
@@ -220,7 +223,6 @@ jobs:
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
           # build items (limit to 15)
-          ITEMS=$(head -n 15 "$NEW_FILE" | jq -R . | jq -s .)
           ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
           DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
           EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
@@ -240,35 +242,123 @@ jobs:
           sleep $(( (RANDOM % 3) + 1 ))
           curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
 
-      - name: Archive full list to Discord
-        run: |
-          set -eux
-          ORG=${{ matrix.org }}
-          # Use the dedicated archive webhook
-          WEBHOOK="${{ secrets.DISCORD_WEBHOOK_ARCHIVE }}"
-          CUR="data/current/${ORG}/live.txt"
-          COUNT=$(wc -l < "$CUR" || echo 0)
-          DESC="Full list of live subdomains for ${ORG} (${COUNT} total)."
-          EMBED=$(jq -n --arg title "Archive — ${ORG} (${COUNT})" \
-                        --arg desc "$DESC" \
-                        '{
-                          "embeds": [
-                            {
-                              "title": $title,
-                              "description": $desc,
-                              "footer": {"text": "GitHub Actions"}
-                            }
-                          ]
-                        }')
-          curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || true
-
-      - name: Upload new file as artifact (optional backup)
+      - name: Upload new file as artifact for Nuclei scan
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
         uses: actions/upload-artifact@v4
         with:
-          name: new-${{ matrix.org }}-${{ github.run_id }}
+          name: new-${{ matrix.org }}-subdomains
           path: ${{ steps.compare.outputs.NEW_FILE }}
+          retention-days: 1 # Keep artifact for 1 day, enough for the next Nuclei scan
 
-      - name: Done - summary
+  # *** UPDATE 2 & 3: New job for Nuclei scanning ***
+  nuclei-scan:
+    name: Nuclei Vulnerability Scan
+    needs: monitor
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        org: [ "bitdefender", "telekom" ]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Install Nuclei
+        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+      # *** UPDATE 3: Check if it's the right time to run (every 12 hours) ***
+      - name: Check execution time
+        id: timecheck
         run: |
-          echo "job finished for ${{ matrix.org }} (run $GITHUB_RUN_ID)"
+          HOUR=$(date +%H)
+          # Run only at 00:00 or 12:00 UTC
+          if [[ "$HOUR" == "00" || "$HOUR" == "12" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "It's time for the Nuclei scan."
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "Skipping Nuclei scan. Next run at 00:00 or 12:00 UTC."
+          fi
+
+      - name: Download new subdomains list
+        if: steps.timecheck.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: new-${{ matrix.org }}-subdomains
+          path: ./
+          # The artifact is uploaded by the 'monitor' job from the same run
+          run-id: ${{ github.run_id }}
+
+      - name: Run Nuclei on new subdomains
+        id: nuclei
+        if: steps.timecheck.outputs.should_run == 'true'
+        run: |
+          set -eux
+          NEW_FILE="new-${{ matrix.org }}-${GITHUB_RUN_ID}.txt"
+          if [ ! -s "$NEW_FILE" ]; then
+            echo "No new subdomains file found to scan. Skipping."
+            echo "scan_results=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Updating Nuclei templates..."
+          nuclei -update-templates
+
+          echo "Running Nuclei scan on $NEW_FILE..."
+          # Using -json for easier parsing, -o for output file
+          nuclei -l "$NEW_FILE" -tags http -es info -mhe 5 -stats -json \
+            -H "X-Forwarded-For: 127.0.0.1" \
+            -H "X-Forwarded-Host: 127.0.0.1" \
+            -H "X-Forwarded: 127.0.0.1" \
+            -H "Forwarded-For: 127.0.0.1" \
+            -o nuclei_results.txt
+
+          if [ -s "nuclei_results.txt" ]; then
+            echo "scan_results=true" >> $GITHUB_OUTPUT
+            echo "Nuclei found findings."
+          else
+            echo "scan_results=false" >> $GITHUB_OUTPUT
+            echo "Nuclei found no findings."
+          fi
+
+      # *** UPDATE 4: Send Nuclei results to Discord ***
+      - name: Post Nuclei results to Discord
+        if: steps.nuclei.outputs.scan_results == 'true'
+        run: |
+          set -eux
+          ORG=${{ matrix.org }}
+          # pick the webhook depending on org
+          if [ "$ORG" = "bitdefender" ]; then
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
+          else
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
+          fi
+          
+          # Format the JSON output into a readable text block for Discord
+          # Limit to first 10 findings to avoid message size limits
+          FINDINGS=$(head -n 10 nuclei_results.txt | jq -r '"\(.templateID): \(.host) (\(.info.name))"' | paste -s -d'\n' -)
+          COUNT=$(wc -l < nuclei_results.txt)
+          
+          DESCRIPTION="Nuclei scan on new subdomains found **${COUNT}** potential issues. Showing first 10."
+          
+          EMBED=$(jq -n --arg title "🚨 Nuclei Findings for ${ORG}" \
+                --arg desc "$DESCRIPTION" \
+                --arg findings "$FINDINGS" \
+                '{
+                  "embeds":[
+                    {
+                      "title":$title,
+                      "description":$desc,
+                      "color": 16711680, # Red color
+                      "fields":[ {"name":"Findings","value":"```'"$FINDINGS"'```","inline":false} ],
+                      "footer":{"text":"Run via GitHub Actions"} 
+                    }
+                  ]
+                }')
+          
+          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"

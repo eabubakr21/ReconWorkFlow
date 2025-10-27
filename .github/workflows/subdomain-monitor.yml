@@ -317,11 +317,17 @@ jobs:
           echo "Nuclei scan completed. Results saved to $OUTPUT_FILE"
 
       - name: Send Nuclei results to Discord
-        if: steps.nuclei_run.outputs.nuclei_results_file != '/dev/null' && hashFile(steps.nuclei_run.outputs.nuclei_results_file) != ''
+        if: steps.nuclei_run.outputs.nuclei_results_file != '/dev/null'
         run: |
           set -eux
           ORG=${{ matrix.org }}
           RESULTS_FILE="${{ steps.nuclei_run.outputs.nuclei_results_file }}"
+          
+          # Check if the results file exists and is not empty
+          if [ ! -s "$RESULTS_FILE" ]; then
+            echo "Nuclei results file is empty or does not exist. Skipping Discord notification."
+            exit 0
+          fi
           
           # pick the webhook depending on org
           if [ "$ORG" = "bitdefender" ]; then
@@ -334,24 +340,20 @@ jobs:
           RESULTS_TEXT=$(head -n 20 "$RESULTS_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
           VULN_COUNT=$(wc -l < "$RESULTS_FILE" || echo 0)
           
-          if [ "$VULN_COUNT" -gt 0 ]; then
-            DESCRIPTION="Nuclei found ${VULN_COUNT} potential issues on new subdomains. Showing first 20."
-            EMBED=$(jq -n --arg title "🛡️ Nuclei Scan Results — ${ORG}" \
-                  --arg desc "$DESCRIPTION" \
-                  --arg results "$RESULTS_TEXT" \
-                  '{
-                    "embeds": [
-                      {
-                        "title": $title,
-                        "description": $desc,
-                        "color": 15105570, # Orange color
-                        "fields": [{"name": "Findings (first 20)", "value": "```'$results'```", "inline": false}],
-                        "footer": {"text": "Run via GitHub Actions"}
-                      }
-                    ]
-                  }')
-            sleep $(( (RANDOM % 3) + 1 ))
-            curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
-          else
-            echo "No vulnerabilities found by Nuclei."
-          fi
+          DESCRIPTION="Nuclei found ${VULN_COUNT} potential issues on new subdomains. Showing first 20."
+          EMBED=$(jq -n --arg title "🛡️ Nuclei Scan Results — ${ORG}" \
+                --arg desc "$DESCRIPTION" \
+                --arg results "$RESULTS_TEXT" \
+                '{
+                  "embeds": [
+                    {
+                      "title": $title,
+                      "description": $desc,
+                      "color": 15105570, # Orange color
+                      "fields": [{"name": "Findings (first 20)", "value": "```'$results'```", "inline": false}],
+                      "footer": {"text": "Run via GitHub Actions"}
+                    }
+                  ]
+                }')
+          sleep $(( (RANDOM % 3) + 1 ))
+          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"

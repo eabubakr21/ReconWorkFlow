@@ -1,16 +1,17 @@
-name: Subdomain Monitor (orgs → Discord + Nuclei Scan)
+name: Subdomain & Nuclei Monitor
 
 permissions:
   contents: write        # allows pushing commits, updating files
-  id-token: write        # optional if you use OIDC (not needed for push)
-  actions: read          # required to download artifacts between jobs
+  actions: read          # allows downloading artifacts from other jobs
 
 on:
+  # Schedule for the main subdomain monitoring (every 6 hours)
   schedule:
-    - cron: "0 */6 * * *"   # run every 6 hours
-  workflow_dispatch:        # allow manual runs
+    - cron: "0 */6 * * *"
+  workflow_dispatch:     # allow manual runs for the main workflow
 
 jobs:
+  # --- JOB 1: Subdomain Discovery and Monitoring ---
   monitor:
     runs-on: ubuntu-latest
     strategy:
@@ -76,11 +77,11 @@ jobs:
           rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
           echo "[+] httpx-pd ready"
 
-      - name: Export PDCP API key (robust)
+      - name: Export PDCP API key from secrets
         run: |
           if [ -n "${{ secrets.PDCP_API_KEY }}" ]; then
             echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
-            echo "PDCP_API_KEY exported"
+            echo "PDCP_API_KEY exported from secrets"
           else
             echo "PDCP_API_KEY not set — skipping chaos client"
           fi
@@ -103,10 +104,10 @@ jobs:
               # assetfinder
               cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
 
-              # export chaos key and run chaos
-              export PDCP_API_KEY=907560e1-54a0-452e-a6db-3c21fecc2288
-              echo "PDCP_API_KEY exported"
-              chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+              # run chaos
+              if [ -n "$PDCP_API_KEY" ]; then
+                chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+              fi
   
               # subenum (run after chaos)
               if [ ! -d "SubEnum" ]; then
@@ -137,7 +138,7 @@ jobs:
               wc -l "$CUR_DIR/candidates.txt" || true
               echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
 
-      - name: Probe live subdomains with httpx-pd
+      - name: Probe live subdomains and de-duplicate
         id: probe
         run: |
           set -eux
@@ -146,9 +147,8 @@ jobs:
           LIVE="data/current/${ORG}/live.txt"
           touch $LIVE
           if [ -s "$CUR" ]; then
-            cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -o "$LIVE" || true
-            # *** UPDATE 1: Strip ports to de-duplicate subdomains found on multiple ports ***
-            sed -i 's/:.*//' "$LIVE"
+            # Run httpx, then cut the port, then sort and unique to get only hostnames
+            cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -follow-redirects | cut -d ':' -f 1 | sort -u > "$LIVE" || true
           else
             echo "[!] no candidates"
           fi
@@ -190,22 +190,24 @@ jobs:
           ORG=${{ matrix.org }}
           PREV="data/previous/${ORG}.txt"
           CUR="data/current/${ORG}/live.txt"
+          NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
           
           # Pull latest changes before making our own
           git pull --rebase origin main || true
           
-          # Always update the previous file with current results for the next run
+          # Always update the previous file with current results to prevent re-alerting
           cp "$CUR" "$PREV"
           git add "$PREV"
           
           # Only add and commit new file if there are new subdomains
-          if [ -s "data/new/${ORG}-${GITHUB_RUN_ID}.txt" ]; then
-            git add "data/new/${ORG}-${GITHUB_RUN_ID}.txt"
-            git commit -m "Update ${ORG} live subdomains - run ${GITHUB_RUN_ID}" || true
+          if [ -s "$NEW_FILE" ]; then
+            git add "$NEW_FILE"
+            git commit -m "feat: Update ${ORG} live subdomains with ${NEW_COUNT} new - run ${GITHUB_RUN_ID}" || true
           else
-            git commit -m "Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
+            # If no new subs, just commit the updated previous file
+            git commit -m "chore: Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
           fi
           git push || echo "Push failed; ensure repository has write permissions for the action"
 
@@ -225,36 +227,40 @@ jobs:
           # build items (limit to 15)
           ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
           DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
-          EMBED=$(jq -n --arg title "New live subdomains — ${ORG} (${COUNT} new)" \
+          EMBED=$(jq -n --arg title "🚨 New live subdomains — ${ORG} (${COUNT} new)" \
                 --arg desc "$DESCRIPTION" \
-                --arg items "$(head -n 15 "$NEW_FILE" | paste -s -d'\n' - | sed 's/"/\\"/g')" \
+                --arg items "$ITEMS_TEXT" \
                 '{
                   "embeds":[
                     {
                       "title":$title,
                       "description":$desc,
-                      "fields":[ {"name":"New (first 15)","value":$items,"inline":false} ],
+                      "color": 16711680, # Red color
+                      "fields":[ {"name":"New (first 15)","value":"```'$items'```","inline":false} ],
                       "footer":{"text":"Run via GitHub Actions"} 
                     }
                   ]
                 }')
           # simple rate-limit backoff (avoid bursts)
           sleep $(( (RANDOM % 3) + 1 ))
-          curl -s -H "Content-Type: application/json" -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
 
-      - name: Upload new file as artifact for Nuclei scan
+      - name: Upload new subdomains as artifact for Nuclei job
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
         uses: actions/upload-artifact@v4
         with:
-          name: new-${{ matrix.org }}-subdomains
+          name: new-subs-${{ matrix.org }}
           path: ${{ steps.compare.outputs.NEW_FILE }}
-          retention-days: 1 # Keep artifact for 1 day, enough for the next Nuclei scan
+          retention-days: 1 # Artifacts are only needed for 12 hours
 
-  # *** UPDATE 2 & 3: New job for Nuclei scanning ***
+  # --- JOB 2: Nuclei Vulnerability Scan ---
   nuclei-scan:
-    name: Nuclei Vulnerability Scan
-    needs: monitor
+    # This job runs on a separate 12-hour schedule
     runs-on: ubuntu-latest
+    # It depends on the 'monitor' job having completed successfully
+    needs: monitor
+    if: github.event_name == 'schedule' # Only run on scheduled triggers, not manual dispatch
+    
     strategy:
       matrix:
         org: [ "bitdefender", "telekom" ]
@@ -263,102 +269,89 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.21"
-
-      - name: Install Nuclei
-        run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-
-      # *** UPDATE 3: Check if it's the right time to run (every 12 hours) ***
-      - name: Check execution time
-        id: timecheck
-        run: |
-          HOUR=$(date +%H)
-          # Run only at 00:00 or 12:00 UTC
-          if [[ "$HOUR" == "00" || "$HOUR" == "12" ]]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "It's time for the Nuclei scan."
-          else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "Skipping Nuclei scan. Next run at 00:00 or 12:00 UTC."
-          fi
-
-      - name: Download new subdomains list
-        if: steps.timecheck.outputs.should_run == 'true'
+      - name: Download new subdomains artifact
         uses: actions/download-artifact@v4
         with:
-          name: new-${{ matrix.org }}-subdomains
+          name: new-subs-${{ matrix.org }}
           path: ./
-          # The artifact is uploaded by the 'monitor' job from the same run
-          run-id: ${{ github.run_id }}
+        continue-on-error: true # Continue even if no new subdomains were found
+
+      - name: Install Nuclei
+        run: |
+          echo "[*] Downloading latest Nuclei release..."
+          URL=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest \
+            | grep "browser_download_url.*linux_amd64.zip" \
+            | cut -d '"' -f 4)
+          wget -q "$URL" -O nuclei_latest.zip
+          unzip -o nuclei_latest.zip
+          chmod +x nuclei
+          sudo mv nuclei /usr/local/bin/nuclei
+          rm -f nuclei_latest.zip LICENSE.md README.md 2>/dev/null || true
+          echo "[+] Nuclei ready"
 
       - name: Run Nuclei on new subdomains
-        id: nuclei
-        if: steps.timecheck.outputs.should_run == 'true'
+        id: nuclei_run
         run: |
-          set -eux
-          NEW_FILE="new-${{ matrix.org }}-${GITHUB_RUN_ID}.txt"
-          if [ ! -s "$NEW_FILE" ]; then
-            echo "No new subdomains file found to scan. Skipping."
-            echo "scan_results=false" >> $GITHUB_OUTPUT
+          # Check if the artifact file exists
+          if [ ! -f "new-${{ matrix.org }}-${{ github.run_id }}.txt" ]; then
+            echo "No new subdomains found for ${{ matrix.org }} in the last run. Skipping Nuclei scan."
+            echo "nuclei_results_file=/dev/null" >> $GITHUB_OUTPUT
             exit 0
           fi
-          
-          echo "Updating Nuclei templates..."
-          nuclei -update-templates
 
-          echo "Running Nuclei scan on $NEW_FILE..."
-          # Using -json for easier parsing, -o for output file
-          nuclei -l "$NEW_FILE" -tags http -es info -mhe 5 -stats -json \
+          INPUT_FILE="new-${{ matrix.org }}-${{ github.run_id }}.txt"
+          OUTPUT_FILE="nuclei-results-${{ matrix.org }}.txt"
+          
+          echo "[*] Updating Nuclei templates..."
+          nuclei --update -silent
+          
+          echo "[*] Running Nuclei scan on new subdomains for ${{ matrix.org }}..."
+          nuclei -t ~/nuclei-templates/http/ -l "$INPUT_FILE" -es info -mhe 5 -stats -silent \
             -H "X-Forwarded-For: 127.0.0.1" \
             -H "X-Forwarded-Host: 127.0.0.1" \
             -H "X-Forwarded: 127.0.0.1" \
             -H "Forwarded-For: 127.0.0.1" \
-            -o nuclei_results.txt
+            -o "$OUTPUT_FILE"
+          
+          echo "nuclei_results_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+          echo "Nuclei scan completed. Results saved to $OUTPUT_FILE"
 
-          if [ -s "nuclei_results.txt" ]; then
-            echo "scan_results=true" >> $GITHUB_OUTPUT
-            echo "Nuclei found findings."
-          else
-            echo "scan_results=false" >> $GITHUB_OUTPUT
-            echo "Nuclei found no findings."
-          fi
-
-      # *** UPDATE 4: Send Nuclei results to Discord ***
-      - name: Post Nuclei results to Discord
-        if: steps.nuclei.outputs.scan_results == 'true'
+      - name: Send Nuclei results to Discord
+        if: steps.nuclei_run.outputs.nuclei_results_file != '/dev/null' && hashFile(steps.nuclei_run.outputs.nuclei_results_file) != ''
         run: |
           set -eux
           ORG=${{ matrix.org }}
+          RESULTS_FILE="${{ steps.nuclei_run.outputs.nuclei_results_file }}"
+          
           # pick the webhook depending on org
           if [ "$ORG" = "bitdefender" ]; then
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
           else
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
+
+          # Read results and escape for JSON
+          RESULTS_TEXT=$(head -n 20 "$RESULTS_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
+          VULN_COUNT=$(wc -l < "$RESULTS_FILE" || echo 0)
           
-          # Format the JSON output into a readable text block for Discord
-          # Limit to first 10 findings to avoid message size limits
-          FINDINGS=$(head -n 10 nuclei_results.txt | jq -r '"\(.templateID): \(.host) (\(.info.name))"' | paste -s -d'\n' -)
-          COUNT=$(wc -l < nuclei_results.txt)
-          
-          DESCRIPTION="Nuclei scan on new subdomains found **${COUNT}** potential issues. Showing first 10."
-          
-          EMBED=$(jq -n --arg title "🚨 Nuclei Findings for ${ORG}" \
-                --arg desc "$DESCRIPTION" \
-                --arg findings "$FINDINGS" \
-                '{
-                  "embeds":[
-                    {
-                      "title":$title,
-                      "description":$desc,
-                      "color": 16711680, # Red color
-                      "fields":[ {"name":"Findings","value":"```'"$FINDINGS"'```","inline":false} ],
-                      "footer":{"text":"Run via GitHub Actions"} 
-                    }
-                  ]
-                }')
-          
-          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+          if [ "$VULN_COUNT" -gt 0 ]; then
+            DESCRIPTION="Nuclei found ${VULN_COUNT} potential issues on new subdomains. Showing first 20."
+            EMBED=$(jq -n --arg title "🛡️ Nuclei Scan Results — ${ORG}" \
+                  --arg desc "$DESCRIPTION" \
+                  --arg results "$RESULTS_TEXT" \
+                  '{
+                    "embeds": [
+                      {
+                        "title": $title,
+                        "description": $desc,
+                        "color": 15105570, # Orange color
+                        "fields": [{"name": "Findings (first 20)", "value": "```'$results'```", "inline": false}],
+                        "footer": {"text": "Run via GitHub Actions"}
+                      }
+                    ]
+                  }')
+            sleep $(( (RANDOM % 3) + 1 ))
+            curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+          else
+            echo "No vulnerabilities found by Nuclei."
+          fi

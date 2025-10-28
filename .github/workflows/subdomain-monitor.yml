@@ -15,6 +15,7 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false     
       matrix:
         org: [ "bitdefender", "telekom" ]
 
@@ -46,6 +47,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.21"
+          cache: false  
 
       - name: Install required Go tools and pip httpx
         run: |
@@ -88,6 +90,7 @@ jobs:
 
       - name: Run subdomain enumeration pipeline
         id: enum
+        continue-on-error: true  
         run: |
               set -eux
               ORG=${{ matrix.org }}

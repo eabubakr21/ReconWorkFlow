@@ -102,7 +102,7 @@ jobs:
               subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
 
               # findomain
-              findomain -quiet -f wildcards.txt -oL "$CUR_DIR/findomain.txt" || true
+              findomain -quiet -f wildcards.txt | tee "$CUR_DIR/findomain.txt" || true
 
               # assetfinder
               cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"

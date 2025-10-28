@@ -188,6 +188,8 @@ jobs:
           fi
 
       - name: Commit new results & update previous (if any)
+        env:
+          NEW_COUNT: ${{ steps.compare.outputs.NEW_COUNT }}
         run: |
           set -eux
           ORG=${{ matrix.org }}
@@ -196,23 +198,21 @@ jobs:
           NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-          
-          # Pull latest changes before making our own
+    
           git pull --rebase origin main || true
-          
-          # Always update the previous file with current results to prevent re-alerting
+    
           cp "$CUR" "$PREV"
           git add "$PREV"
-          
-          # Only add and commit new file if there are new subdomains
+  
           if [ -s "$NEW_FILE" ]; then
+            COUNT=${NEW_COUNT:-0}
             git add "$NEW_FILE"
-            git commit -m "feat: Update ${ORG} live subdomains with ${NEW_COUNT} new - run ${GITHUB_RUN_ID}" || true
+            git commit -m "feat: Update ${ORG} live subdomains with ${COUNT} new - run ${GITHUB_RUN_ID}" || true
           else
-            # If no new subs, just commit the updated previous file
             git commit -m "chore: Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
           fi
           git push || echo "Push failed; ensure repository has write permissions for the action"
+
 
       - name: Post new subdomains to Discord (embed, batched)
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'

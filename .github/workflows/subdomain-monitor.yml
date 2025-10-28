@@ -198,12 +198,12 @@ jobs:
           NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-    
+
           git pull --rebase origin main || true
-    
+
           cp "$CUR" "$PREV"
           git add "$PREV"
-  
+
           if [ -s "$NEW_FILE" ]; then
             COUNT=${NEW_COUNT:-0}
             git add "$NEW_FILE"
@@ -211,7 +211,9 @@ jobs:
           else
             git commit -m "chore: Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
           fi
+
           git push || echo "Push failed; ensure repository has write permissions for the action"
+
 
 
       - name: Post new subdomains to Discord (embed, batched)

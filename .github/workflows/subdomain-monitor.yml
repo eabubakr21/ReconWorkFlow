@@ -216,39 +216,48 @@ jobs:
 
 
 
-      - name: Post new subdomains to Discord (embed, batched)
-        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
-        run: |
-          set -eux
-          ORG=${{ matrix.org }}
-          NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
-          COUNT=${{ steps.compare.outputs.NEW_COUNT }}
-          # pick the webhook depending on org
-          if [ "$ORG" = "bitdefender" ]; then
-            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
-          else
-            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
-          fi
-          # build items (limit to 15)
-          ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
-          DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
-          EMBED=$(jq -n --arg title "🚨 New live subdomains — ${ORG} (${COUNT} new)" \
-                --arg desc "$DESCRIPTION" \
-                --arg items "$ITEMS_TEXT" \
-                '{
-                  "embeds":[
-                    {
-                      "title":$title,
-                      "description":$desc,
-                      "color": 16711680, # Red color
-                      "fields":[ {"name":"New (first 15)","value":"```'$items'```","inline":false} ],
-                      "footer":{"text":"Run via GitHub Actions"} 
-                    }
-                  ]
-                }')
-          # simple rate-limit backoff (avoid bursts)
-          sleep $(( (RANDOM % 3) + 1 ))
-          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+            - name: Post new subdomains to Discord (embed, batched)
+              if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+              run: |
+                set -eux
+                ORG=${{ matrix.org }}
+                NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
+                COUNT=${{ steps.compare.outputs.NEW_COUNT }}
+
+                # pick the webhook depending on org
+                if [ "$ORG" = "bitdefender" ]; then
+                  WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
+                else
+                  WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
+                fi
+
+                # build items (limit to 15)
+                ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
+                DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
+
+                EMBED=$(jq -n \
+                  --arg title "🚨 New live subdomains — ${ORG} (${COUNT} new)" \
+                  --arg desc "$DESCRIPTION" \
+                  --arg items "$ITEMS_TEXT" \
+                  '{
+                    "embeds":[
+                      {
+                        "title":$title,
+                        "description":$desc,
+                        "color":16711680,
+                        "fields":[
+                          {"name":"New (first 15)","value":"```" + $items + "```","inline":false}
+                        ],
+                        "footer":{"text":"Run via GitHub Actions"}
+                      }
+                    ]
+                  }')
+
+                # simple rate-limit backoff (avoid bursts)
+                sleep $(( (RANDOM % 3) + 1 ))
+
+                curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+
 
       - name: Upload new subdomains as artifact for Nuclei job
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'

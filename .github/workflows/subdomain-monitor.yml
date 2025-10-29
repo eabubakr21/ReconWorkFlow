@@ -1,26 +1,23 @@
 name: Subdomain & Nuclei Monitor
 
 permissions:
-  contents: write        # allows pushing commits, updating files
-  actions: read          # allows downloading artifacts from other jobs
+  contents: write
+  actions: read
 
 on:
-  # Schedule for the main subdomain monitoring (every 6 hours)
   schedule:
     - cron: "0 */6 * * *"
-  workflow_dispatch:     # allow manual runs for the main workflow
+  workflow_dispatch:
 
 jobs:
-  # --- JOB 1: Subdomain Discovery and Monitoring ---
   monitor:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false     
+      fail-fast: false
       matrix:
-        org: [ "bitdefender", "telekom" ]
+        org: ["bitdefender", "telekom"]
 
     env:
-      # default ports for httpx-pd
       HTTPX_PORTS: "80,443,8080,8000,8888,8443,9443"
 
     steps:
@@ -31,134 +28,104 @@ jobs:
           fetch-depth: 0
 
       - name: Ensure directories exist
-        run: |
-          mkdir -p data/wildcards data/current data/previous data/new
+        run: mkdir -p data/{wildcards,current,previous,new}
 
-      - name: Copy wildcards into working file
-        run: |
-          cp data/wildcards/${{ matrix.org }}.txt wildcards.txt
+      - name: Copy wildcard file
+        run: cp data/wildcards/${{ matrix.org }}.txt wildcards.txt
 
-      - name: Install OS deps & unzip tools
+      - name: Install dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip wget python3-pip jq
+          pip3 install 'httpx[cli]' || true
 
-      - name: Setup Go (for projectdiscovery & tomnomnom tools)
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.21"
-          cache: false  
+          cache: false
 
-      - name: Install required Go tools and pip httpx
+      - name: Install Go tools
         run: |
           export PATH=$PATH:$HOME/go/bin
           go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
           go install -v github.com/projectdiscovery/chaos-client/cmd/chaos@latest
           go install -v github.com/tomnomnom/anew@latest
           go install -v github.com/tomnomnom/assetfinder@latest
-          pip3 install 'httpx[cli]' || true
 
-      - name: Install findomain (binary)
+      - name: Install findomain
         run: |
           curl -L -o findomain.zip "https://github.com/findomain/findomain/releases/latest/download/findomain-linux-i386.zip"
           unzip -o findomain.zip
           chmod +x findomain
-          sudo mv findomain /usr/bin/findomain || sudo mv findomain /usr/local/bin/findomain
+          sudo mv findomain /usr/local/bin/findomain
           rm -f findomain.zip
 
-      - name: Install httpx (ProjectDiscovery linux_amd64) and move to httpx-pd
+      - name: Install httpx (PD binary)
         run: |
-          echo "[*] Downloading latest httpx release..."
-          URL=$(curl -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest \
-            | grep "browser_download_url.*linux_amd64.zip" \
-            | cut -d '"' -f 4)
-          wget -q "$URL" -O httpx_latest.zip
-          unzip -o httpx_latest.zip
+          echo "[*] Installing httpx..."
+          URL=$(curl -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest | grep "browser_download_url.*linux_amd64.zip" | cut -d '"' -f 4)
+          wget -q "$URL" -O httpx.zip
+          unzip -o httpx.zip
           chmod +x httpx
           sudo mv httpx /usr/local/bin/httpx-pd
-          rm -f httpx_latest.zip LICENSE.md README.md 2>/dev/null || true
-          echo "[+] httpx-pd ready"
+          rm -f httpx.zip LICENSE.md README.md 2>/dev/null || true
 
-      - name: Export PDCP API key from secrets
+      - name: Export PDCP key
         run: |
           if [ -n "${{ secrets.PDCP_API_KEY }}" ]; then
             echo "PDCP_API_KEY=${{ secrets.PDCP_API_KEY }}" >> $GITHUB_ENV
-            echo "PDCP_API_KEY exported from secrets"
-          else
-            echo "PDCP_API_KEY not set — skipping chaos client"
           fi
 
-      - name: Run subdomain enumeration pipeline
+      - name: Run subdomain enumeration
         id: enum
-        continue-on-error: true  
         run: |
-              set -eux
-              ORG=${{ matrix.org }}
-              TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
-              CUR_DIR="data/current/${ORG}"
-              mkdir -p "$CUR_DIR"
-    
-              # run subfinder
-              subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
+          set -eux
+          ORG=${{ matrix.org }}
+          CUR_DIR="data/current/${ORG}"
+          mkdir -p "$CUR_DIR"
 
-              # findomain
-              findomain -quiet -f wildcards.txt | tee "$CUR_DIR/findomain.txt" || true
+          subfinder -silent -all -recursive -t 200 -dL wildcards.txt -o "$CUR_DIR/subfinder.txt" || true
+          findomain -quiet -f wildcards.txt | tee "$CUR_DIR/findomain.txt" || true
+          cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
 
-              # assetfinder
-              cat wildcards.txt | xargs -n1 -I {} bash -c "assetfinder --subs-only {} >> $CUR_DIR/assetfinder.txt || true"
+          if [ -n "${PDCP_API_KEY:-}" ]; then
+            chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
+          fi
 
-              # run chaos
-              if [ -n "$PDCP_API_KEY" ]; then
-                chaos -dL wildcards.txt -silent -o "$CUR_DIR/chaos.txt" || true
-              fi
-  
-              # subenum (run after chaos)
-              if [ ! -d "SubEnum" ]; then
-                git clone https://github.com/bing0o/SubEnum.git
-                cd SubEnum
-                chmod +x setup.sh
-                ./setup.sh
-                cd ..
-              fi
-              ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
+          if [ ! -d "SubEnum" ]; then
+            git clone https://github.com/bing0o/SubEnum.git
+            cd SubEnum && chmod +x setup.sh && ./setup.sh && cd ..
+          fi
+          ./SubEnum/subenum.sh -l wildcards.txt -u wayback,crt,abuseipdb,Amass -o "$CUR_DIR/subenum.txt" || true
 
-              # merge & dedupe results
-              cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt" || true
+          cat "$CUR_DIR"/*.txt 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]' | sort -u > "$CUR_DIR/candidates.txt"
 
-              # exclude reverse wildcard (telekom specific)
-              if [ "$ORG" = "telekom" ]; then
-                grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
-                mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
-              fi
+          if [ "$ORG" = "telekom" ]; then
+            grep -v -E "reverse\.open-telekom-cloud\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" && mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
+          fi
 
-              # exclude out-of-scope subdomains for bitdefender
-              if [ "$ORG" = "bitdefender" ]; then
-                grep -v -E "(lsems\.gravityzone|ssems\.gravityzone|community|resellerportal|stats|sstats|brand|partner-marketing|businessinsights|businessemail|businessresources|oemhub|oemresources|crp|telcosuccess|demo)\.bitdefender\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" || true
-                mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
-              fi
+          if [ "$ORG" = "bitdefender" ]; then
+            grep -v -E "(lsems\.gravityzone|ssems\.gravityzone|community|resellerportal|stats|sstats|brand|partner-marketing|businessinsights|businessemail|businessresources|oemhub|oemresources|crp|telcosuccess|demo)\.bitdefender\.com$" "$CUR_DIR/candidates.txt" > "$CUR_DIR/tmp.txt" && mv "$CUR_DIR/tmp.txt" "$CUR_DIR/candidates.txt"
+          fi
 
-              echo "candidates saved to $CUR_DIR/candidates.txt"
-              wc -l "$CUR_DIR/candidates.txt" || true
-              echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
+          echo "CANDIDATES=$CUR_DIR/candidates.txt" >> $GITHUB_OUTPUT
 
-      - name: Probe live subdomains and de-duplicate
+      - name: Probe live subdomains
         id: probe
         run: |
           set -eux
           ORG=${{ matrix.org }}
           CUR="data/current/${ORG}/candidates.txt"
           LIVE="data/current/${ORG}/live.txt"
-          touch $LIVE
           if [ -s "$CUR" ]; then
-            # Run httpx, then cut the port, then sort and unique to get only hostnames
-            cat "$CUR" | sed '/^\s*$/d' | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -follow-redirects | cut -d ':' -f 1 | sort -u > "$LIVE" || true
+            cat "$CUR" | httpx-pd -ports $HTTPX_PORTS -threads 200 -silent -follow-redirects | cut -d ':' -f 1 | sort -u > "$LIVE"
           else
-            echo "[!] no candidates"
+            touch "$LIVE"
           fi
           echo "LIVE=$LIVE" >> $GITHUB_OUTPUT
-          wc -l "$LIVE" || true
 
-      - name: Compare with previous and generate new list
+      - name: Compare and find new subdomains
         id: compare
         run: |
           set -eux
@@ -166,208 +133,121 @@ jobs:
           PREV="data/previous/${ORG}.txt"
           CUR="data/current/${ORG}/live.txt"
           NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
-          
-          # Create previous file if it doesn't exist
-          if [ ! -f "$PREV" ]; then
-            touch "$PREV"
-          fi
-          
-          # differences: lines in CUR but not in PREV
+
+          mkdir -p data/previous data/new
+          touch "$PREV"
           comm -13 <(sort "$PREV") <(sort "$CUR") > "$NEW_FILE" || true
-          # cleanup blank lines
           sed -i '/^\s*$/d' "$NEW_FILE" || true
           NEW_COUNT=$(wc -l < "$NEW_FILE" || echo 0)
           echo "NEW_FILE=$NEW_FILE" >> $GITHUB_OUTPUT
           echo "NEW_COUNT=$NEW_COUNT" >> $GITHUB_OUTPUT
-          echo "NEW_COUNT=$NEW_COUNT"
-          if [ "$NEW_COUNT" -eq 0 ]; then
-            echo "No new live subdomains found."
-          else
-            echo "Found $NEW_COUNT new live subdomains"
-            head -n 50 "$NEW_FILE" || true
-          fi
 
-      - name: Commit new results & update previous (if any)
-        env:
-          NEW_COUNT: ${{ steps.compare.outputs.NEW_COUNT }}
+      - name: Commit new results
         run: |
           set -eux
           ORG=${{ matrix.org }}
           PREV="data/previous/${ORG}.txt"
           CUR="data/current/${ORG}/live.txt"
           NEW_FILE="data/new/${ORG}-${GITHUB_RUN_ID}.txt"
+          NEW_COUNT=$(wc -l < "$NEW_FILE" || echo 0)
+
           git config user.name "subdomain-bot"
           git config user.email "bot@example.com"
-
           git pull --rebase origin main || true
 
           cp "$CUR" "$PREV"
           git add "$PREV"
 
-          if [ -s "$NEW_FILE" ]; then
-            COUNT=${NEW_COUNT:-0}
+          if [ "$NEW_COUNT" -gt 0 ]; then
             git add "$NEW_FILE"
-            git commit -m "feat: Update ${ORG} live subdomains with ${COUNT} new - run ${GITHUB_RUN_ID}" || true
+            git commit -m "feat: Update ${ORG} (${NEW_COUNT} new) - run ${GITHUB_RUN_ID}" || true
           else
             git commit -m "chore: Update ${ORG} previous list - run ${GITHUB_RUN_ID}" || true
           fi
 
-          git push || echo "Push failed; ensure repository has write permissions for the action"
+          git push || echo "Push failed; check permissions"
 
-
-
-            - name: Post new subdomains to Discord (embed, batched)
-              if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
-              run: |
-                set -eux
-                ORG=${{ matrix.org }}
-                NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
-                COUNT=${{ steps.compare.outputs.NEW_COUNT }}
-
-                # pick the webhook depending on org
-                if [ "$ORG" = "bitdefender" ]; then
-                  WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
-                else
-                  WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
-                fi
-
-                # build items (limit to 15)
-                ITEMS_TEXT=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
-                DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15. See repo for full list."
-
-                EMBED=$(jq -n \
-                  --arg title "🚨 New live subdomains — ${ORG} (${COUNT} new)" \
-                  --arg desc "$DESCRIPTION" \
-                  --arg items "$ITEMS_TEXT" \
-                  '{
-                    "embeds":[
-                      {
-                        "title":$title,
-                        "description":$desc,
-                        "color":16711680,
-                        "fields":[
-                          {"name":"New (first 15)","value":"```" + $items + "```","inline":false}
-                        ],
-                        "footer":{"text":"Run via GitHub Actions"}
-                      }
-                    ]
-                  }')
-
-                # simple rate-limit backoff (avoid bursts)
-                sleep $(( (RANDOM % 3) + 1 ))
-
-                curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
-
-
-      - name: Upload new subdomains as artifact for Nuclei job
+      - name: Post new subs to Discord
         if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: new-subs-${{ matrix.org }}
-          path: ${{ steps.compare.outputs.NEW_FILE }}
-          retention-days: 1 # Artifacts are only needed for 12 hours
-
-  # --- JOB 2: Nuclei Vulnerability Scan ---
-  nuclei-scan:
-    # This job runs on a separate 12-hour schedule
-    runs-on: ubuntu-latest
-    # It depends on the 'monitor' job having completed successfully
-    needs: monitor
-    if: github.event_name == 'schedule' # Only run on scheduled triggers, not manual dispatch
-    
-    strategy:
-      matrix:
-        org: [ "bitdefender", "telekom" ]
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Download new subdomains artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: new-subs-${{ matrix.org }}
-          path: ./
-        continue-on-error: true # Continue even if no new subdomains were found
-
-      - name: Install Nuclei
-        run: |
-          echo "[*] Downloading latest Nuclei release..."
-          URL=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest \
-            | grep "browser_download_url.*linux_amd64.zip" \
-            | cut -d '"' -f 4)
-          wget -q "$URL" -O nuclei_latest.zip
-          unzip -o nuclei_latest.zip
-          chmod +x nuclei
-          sudo mv nuclei /usr/local/bin/nuclei
-          rm -f nuclei_latest.zip LICENSE.md README.md 2>/dev/null || true
-          echo "[+] Nuclei ready"
-
-      - name: Run Nuclei on new subdomains
-        id: nuclei_run
-        run: |
-          # Check if the artifact file exists
-          if [ ! -f "new-${{ matrix.org }}-${{ github.run_id }}.txt" ]; then
-            echo "No new subdomains found for ${{ matrix.org }} in the last run. Skipping Nuclei scan."
-            echo "nuclei_results_file=/dev/null" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          INPUT_FILE="new-${{ matrix.org }}-${{ github.run_id }}.txt"
-          OUTPUT_FILE="nuclei-results-${{ matrix.org }}.txt"
-          
-          echo "[*] Updating Nuclei templates..."
-          nuclei --update -silent
-          
-          echo "[*] Running Nuclei scan on new subdomains for ${{ matrix.org }}..."
-          nuclei -t ~/nuclei-templates/http/ -l "$INPUT_FILE" -es info -mhe 5 -stats -silent \
-            -H "X-Forwarded-For: 127.0.0.1" \
-            -H "X-Forwarded-Host: 127.0.0.1" \
-            -H "X-Forwarded: 127.0.0.1" \
-            -H "Forwarded-For: 127.0.0.1" \
-            -o "$OUTPUT_FILE"
-          
-          echo "nuclei_results_file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
-          echo "Nuclei scan completed. Results saved to $OUTPUT_FILE"
-
-      - name: Send Nuclei results to Discord
-        if: steps.nuclei_run.outputs.nuclei_results_file != '/dev/null'
         run: |
           set -eux
           ORG=${{ matrix.org }}
-          RESULTS_FILE="${{ steps.nuclei_run.outputs.nuclei_results_file }}"
-          
-          # Check if the results file exists and is not empty
-          if [ ! -s "$RESULTS_FILE" ]; then
-            echo "Nuclei results file is empty or does not exist. Skipping Discord notification."
-            exit 0
-          fi
-          
-          # pick the webhook depending on org
+          NEW_FILE="${{ steps.compare.outputs.NEW_FILE }}"
+          COUNT=${{ steps.compare.outputs.NEW_COUNT }}
           if [ "$ORG" = "bitdefender" ]; then
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
           else
             WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
           fi
-
-          # Read results and escape for JSON
-          RESULTS_TEXT=$(head -n 20 "$RESULTS_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
-          VULN_COUNT=$(wc -l < "$RESULTS_FILE" || echo 0)
-          
-          DESCRIPTION="Nuclei found ${VULN_COUNT} potential issues on new subdomains. Showing first 20."
-          EMBED=$(jq -n --arg title "🛡️ Nuclei Scan Results — ${ORG}" \
-                --arg desc "$DESCRIPTION" \
-                --arg results "$RESULTS_TEXT" \
-                '{
-                  "embeds": [
-                    {
-                      "title": $title,
-                      "description": $desc,
-                      "color": 15105570, # Orange color
-                      "fields": [{"name": "Findings (first 20)", "value": "```'$results'```", "inline": false}],
-                      "footer": {"text": "Run via GitHub Actions"}
-                    }
-                  ]
-                }')
-          sleep $(( (RANDOM % 3) + 1 ))
+          ITEMS=$(head -n 15 "$NEW_FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
+          DESCRIPTION="New live subdomains: ${COUNT}. Showing first 15."
+          EMBED=$(jq -n --arg title "🚨 New live subdomains — ${ORG} (${COUNT} new)" --arg desc "$DESCRIPTION" --arg items "$ITEMS" '{
+              "embeds":[{"title":$title,"description":$desc,"color":16711680,"fields":[{"name":"New (first 15)","value":"```'$items'```"}]}]}')
           curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord post failed"
+
+      - name: Upload artifact
+        if: steps.compare.outputs.NEW_COUNT != '' && steps.compare.outputs.NEW_COUNT != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-subs-${{ matrix.org }}
+          path: ${{ steps.compare.outputs.NEW_FILE }}
+          retention-days: 1
+
+  nuclei-scan:
+    runs-on: ubuntu-latest
+    needs: monitor
+    if: github.event_name == 'schedule'
+    strategy:
+      matrix:
+        org: ["bitdefender", "telekom"]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download new subs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: new-subs-${{ matrix.org }}
+          path: ./
+        continue-on-error: true
+
+      - name: Install Nuclei
+        run: |
+          URL=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep "browser_download_url.*linux_amd64.zip" | cut -d '"' -f 4)
+          wget -q "$URL" -O nuclei.zip
+          unzip -o nuclei.zip
+          chmod +x nuclei
+          sudo mv nuclei /usr/local/bin/nuclei
+          rm -f nuclei.zip
+
+      - name: Run Nuclei
+        id: nuclei_run
+        run: |
+          INPUT_FILE=$(ls new-subs-${{ matrix.org }}*txt 2>/dev/null || true)
+          if [ -z "$INPUT_FILE" ]; then
+            echo "No artifact found. Skipping Nuclei."
+            echo "nuclei_results_file=/dev/null" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          OUTPUT="nuclei-results-${{ matrix.org }}.txt"
+          nuclei --update -silent
+          nuclei -t ~/nuclei-templates/http/ -l "$INPUT_FILE" -es info -mhe 5 -stats -silent             -H "X-Forwarded-For: 127.0.0.1" -H "X-Forwarded-Host: 127.0.0.1" -H "Forwarded: 127.0.0.1"             -o "$OUTPUT"
+          echo "nuclei_results_file=$OUTPUT" >> $GITHUB_OUTPUT
+
+      - name: Post Nuclei results
+        if: steps.nuclei_run.outputs.nuclei_results_file != '/dev/null'
+        run: |
+          ORG=${{ matrix.org }}
+          FILE="${{ steps.nuclei_run.outputs.nuclei_results_file }}"
+          [ ! -s "$FILE" ] && echo "No results." && exit 0
+          if [ "$ORG" = "bitdefender" ]; then
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}"
+          else
+            WEBHOOK="${{ secrets.DISCORD_WEBHOOK_TELEKOM }}"
+          fi
+          RESULTS=$(head -n 20 "$FILE" | sed -z 's/\n/\\n/g' | sed 's/"/\\"/g')
+          COUNT=$(wc -l < "$FILE" || echo 0)
+          EMBED=$(jq -n --arg title "🛡️ Nuclei Scan — ${ORG}" --arg desc "Found ${COUNT} potential issues (first 20 shown)" --arg results "$RESULTS" '{
+              "embeds":[{"title":$title,"description":$desc,"color":15105570,"fields":[{"name":"Findings","value":"```'$results'```"}]}]}')
+          curl -s -H "Content-Type: application/json" -X POST -d "$EMBED" "$WEBHOOK" || echo "Discord failed"

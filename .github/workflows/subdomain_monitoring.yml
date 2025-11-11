@@ -35,8 +35,7 @@ jobs:
         with:
           path: |
             ~/go/bin
-            /usr/local/bin/httpx-pd
-            /usr/bin/findomain
+            ~/local/bin
             SubEnum
             ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
@@ -64,8 +63,7 @@ jobs:
         with:
           path: |
             ~/go/bin
-            /usr/local/bin/httpx-pd
-            /usr/bin/findomain
+            ~/local/bin
             SubEnum
             ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
@@ -73,7 +71,7 @@ jobs:
       - name: Add tools to PATH
         run: |
           echo "~/go/bin" >> $GITHUB_PATH
-          echo "/usr/local/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
 
       - name: Run workflow for Deutsche Telekom
         env:
@@ -119,8 +117,7 @@ jobs:
         with:
           path: |
             ~/go/bin
-            /usr/local/bin/httpx-pd
-            /usr/bin/findomain
+            ~/local/bin
             SubEnum
             ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
@@ -128,7 +125,7 @@ jobs:
       - name: Add tools to PATH
         run: |
           echo "~/go/bin" >> $GITHUB_PATH
-          echo "/usr/local/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
 
       - name: Run workflow for Bitdefender
         env:

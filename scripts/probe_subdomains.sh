@@ -17,7 +17,7 @@ if [ ! -f "${RESULTS_DIR}/all_subdomains.txt" ] || [ ! -s "${RESULTS_DIR}/all_su
 fi
 
 # Probe subdomains
-cat "${RESULTS_DIR}/all_subdomains.txt" | httpx-pd -ports 80,443,8080,8000,8888,8443,9443 -threads 200 -silent > "${RESULTS_DIR}/live_subdomains.txt" 2>/dev/null || echo "[!] httpx encountered issues"
+cat "${RESULTS_DIR}/all_subdomains.txt" | ~/local/bin/httpx-pd -ports 80,443,8080,8000,8888,8443,9443 -threads 200 -silent > "${RESULTS_DIR}/live_subdomains.txt" 2>/dev/null || echo "[!] httpx encountered issues"
 
 # Compare with previous results
 PREVIOUS_RESULTS="${RESULTS_DIR}/previous_live_subdomains.txt"

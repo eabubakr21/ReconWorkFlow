@@ -16,6 +16,12 @@ mkdir -p ~/.config/subfinder
 # Run subfinder once to create the default config file
 subfinder -config ~/.config/subfinder/provider-config.yaml -d example.com > /dev/null 2>&1 || true
 
+# Ensure the config file exists before trying to modify it
+if [ ! -f ~/.config/subfinder/provider-config.yaml ]; then
+    echo "[!] Subfinder config file not found, creating a new one"
+    touch ~/.config/subfinder/provider-config.yaml
+fi
+
 # Update subfinder config
 cp scripts/subfinder-config.yaml ~/.config/subfinder/provider-config.yaml
 
@@ -35,7 +41,7 @@ echo "[*] Running subfinder..."
 subfinder -all -t 200 -silent -recursive -dL "$WILDCARDS_FILE" > "${RESULTS_DIR}/subfinder.txt" 2>/dev/null || echo "[!] Subfinder encountered issues"
 
 echo "[*] Running findomain..."
-findomain -quiet -f "$WILDCARDS_FILE" > "${RESULTS_DIR}/findomain.txt" 2>/dev/null || echo "[!] Findomain encountered issues"
+~/local/bin/findomain -quiet -f "$WILDCARDS_FILE" > "${RESULTS_DIR}/findomain.txt" 2>/dev/null || echo "[!] Findomain encountered issues"
 
 echo "[*] Running assetfinder..."
 cat "$WILDCARDS_FILE" | assetfinder -subs-only > "${RESULTS_DIR}/assetfinder.txt" 2>/dev/null || echo "[!] Assetfinder encountered issues"

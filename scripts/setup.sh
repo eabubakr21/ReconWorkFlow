@@ -2,22 +2,25 @@
 
 echo "[*] Installing required tools..."
 
-# Install Go tools
+# Create a local bin directory if it doesn't exist
+mkdir -p ~/local/bin
+
+# Install Go tools to ~/go/bin (default location)
 go install github.com/tomnomnom/assetfinder@latest
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 go install -v github.com/projectdiscovery/chaos-client/cmd/chaos@latest
 go install -v github.com/tomnomnom/anew@latest
 
-# Install findomain
+# Install findomain to ~/local/bin
 echo "[*] Installing findomain..."
 curl -LO https://github.com/findomain/findomain/releases/latest/download/findomain-linux-i386.zip
 unzip findomain-linux-i386.zip
 chmod +x findomain
-sudo mv findomain /usr/bin/findomain
+mv findomain ~/local/bin/
 rm findomain-linux-i386.zip
 
-# Install httpx
+# Install httpx to ~/local/bin
 echo "[*] Installing httpx..."
 pip install 'httpx[cli]'
 echo "[*] Downloading latest httpx release from ProjectDiscovery..."
@@ -27,7 +30,7 @@ URL=$(curl -s https://api.github.com/repos/projectdiscovery/httpx/releases/lates
 wget "$URL" -O httpx_latest.zip
 unzip -o httpx_latest.zip > /dev/null
 chmod +x httpx
-sudo mv httpx /usr/local/bin/httpx-pd
+mv httpx ~/local/bin/httpx-pd
 rm httpx_latest.zip LICENSE.md README.md 2>/dev/null
 
 # Install SubEnum
@@ -37,9 +40,6 @@ cd SubEnum
 chmod +x setup.sh
 ./setup.sh
 cd ..
-
-# Create a dummy go.sum file for caching purposes
-touch go.sum
 
 # Create subfinder config directory and file
 mkdir -p ~/.config/subfinder

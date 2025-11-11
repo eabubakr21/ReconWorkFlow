@@ -11,8 +11,8 @@ mkdir -p "$RESULTS_DIR"
 echo "[*] Scanning with Nuclei for $ORG..."
 
 # Update Nuclei templates
-nuclei --update
-nuclei -ut
+nuclei --update 2>/dev/null || echo "[!] Error updating Nuclei templates"
+nuclei -ut 2>/dev/null || echo "[!] Error updating Nuclei templates"
 
 # Scan new subdomains with Nuclei
 NEW_SUBDOMAINS="${RESULTS_DIR}/new_subdomains.txt"
@@ -24,14 +24,14 @@ if [ -f "$NEW_SUBDOMAINS" ] && [ -s "$NEW_SUBDOMAINS" ]; then
     -H "X-Forwarded-For: 127.0.0.1" \
     -H "X-Forwarded-Host: 127.0.0.1" \
     -H "X-Forwarded: 127.0.0.1" \
-    -H "Forwarded-For: 127.0.0.1" > "$NUCLEI_RESULTS"
+    -H "Forwarded-For: 127.0.0.1" > "$NUCLEI_RESULTS" 2>/dev/null || echo "[!] Nuclei encountered issues"
     
     # Send Nuclei findings to Discord if any
     if [ -s "$NUCLEI_RESULTS" ]; then
         echo "[*] Sending Nuclei findings to Discord..."
         DISCORD_MESSAGE="## Nuclei Scan Results for $ORG\n\n\`\`\`\n$(cat "$NUCLEI_RESULTS")\n\`\`\`"
         
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE\"}" "$WEBHOOK_URL"
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
     else
         echo "[*] No vulnerabilities found by Nuclei."
     fi

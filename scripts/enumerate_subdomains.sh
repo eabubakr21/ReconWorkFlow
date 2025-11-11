@@ -26,27 +26,31 @@ sed -i "s/ZOOMEYE_API_KEY/${ZOOMEYE_API_KEY}/g" ~/.config/subfinder/provider-con
 
 # Run subdomain enumeration tools
 echo "[*] Running subfinder..."
-subfinder -all -t 200 -silent -recursive -dL "$WILDCARDS_FILE" >> "${RESULTS_DIR}/subfinder.txt"
+subfinder -all -t 200 -silent -recursive -dL "$WILDCARDS_FILE" > "${RESULTS_DIR}/subfinder.txt" 2>/dev/null || echo "[!] Subfinder encountered issues"
 
 echo "[*] Running findomain..."
-findomain -quiet -f "$WILDCARDS_FILE" >> "${RESULTS_DIR}/findomain.txt"
+findomain -quiet -f "$WILDCARDS_FILE" > "${RESULTS_DIR}/findomain.txt" 2>/dev/null || echo "[!] Findomain encountered issues"
 
 echo "[*] Running assetfinder..."
-cat "$WILDCARDS_FILE" | assetfinder -subs-only >> "${RESULTS_DIR}/assetfinder.txt"
+cat "$WILDCARDS_FILE" | assetfinder -subs-only > "${RESULTS_DIR}/assetfinder.txt" 2>/dev/null || echo "[!] Assetfinder encountered issues"
 
 echo "[*] Running SubEnum..."
-./SubEnum/subenum.sh -l "$WILDCARDS_FILE" -u wayback,crt,abuseipdb,Amass >> "${RESULTS_DIR}/subenum.txt"
+if [ -f "./SubEnum/subenum.sh" ]; then
+    ./SubEnum/subenum.sh -l "$WILDCARDS_FILE" -u wayback,crt,abuseipdb,Amass > "${RESULTS_DIR}/subenum.txt" 2>/dev/null || echo "[!] SubEnum encountered issues"
+else
+    echo "[!] SubEnum script not found"
+fi
 
 echo "[*] Running chaos..."
-chaos -dL "$WILDCARDS_FILE" >> "${RESULTS_DIR}/chaos.txt"
+chaos -dL "$WILDCARDS_FILE" > "${RESULTS_DIR}/chaos.txt" 2>/dev/null || echo "[!] Chaos encountered issues"
 
 # Combine all results
-cat "${RESULTS_DIR}"/*.txt | anew "${RESULTS_DIR}/all_subdomains.txt"
+cat "${RESULTS_DIR}"/*.txt 2>/dev/null | anew "${RESULTS_DIR}/all_subdomains.txt" || echo "[!] Error combining results"
 
 # Filter out out-of-scope domains
 if [ -f "$OUT_OF_SCOPE_FILE" ]; then
     echo "[*] Filtering out-of-scope domains..."
-    grep -v -f "$OUT_OF_SCOPE_FILE" "${RESULTS_DIR}/all_subdomains.txt" > "${RESULTS_DIR}/filtered_subdomains.txt"
+    grep -v -f "$OUT_OF_SCOPE_FILE" "${RESULTS_DIR}/all_subdomains.txt" > "${RESULTS_DIR}/filtered_subdomains.txt" || echo "[!] Error filtering domains"
     mv "${RESULTS_DIR}/filtered_subdomains.txt" "${RESULTS_DIR}/all_subdomains.txt"
 fi
 

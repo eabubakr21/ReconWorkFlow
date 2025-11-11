@@ -1,3 +1,4 @@
+cat > .github/workflows/subdomain_monitoring.yml << 'EOF'
 name: Subdomain Monitoring Workflow
 
 on:
@@ -11,12 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.19'
+          go-version: '1.21'
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -26,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl wget
+          sudo apt-get install -y unzip curl wget git
           pip install 'httpx[cli]'
           ./scripts/setup.sh
 
@@ -46,12 +47,12 @@ jobs:
     if: always()
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.19'
+          go-version: '1.21'
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -89,7 +90,7 @@ jobs:
           ./scripts/run_workflow.sh "Deutsche_Telekom"
 
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deutsche-telekom-results
           path: Deutsche_Telekom/results/
@@ -100,12 +101,12 @@ jobs:
     if: always()
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.19'
+          go-version: '1.21'
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -143,7 +144,7 @@ jobs:
           ./scripts/run_workflow.sh "Bitdefender"
 
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bitdefender-results
           path: Bitdefender/results/
@@ -154,16 +155,22 @@ jobs:
     if: always()
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create archive
         run: |
           mkdir -p archive
-          cp -r deutsche-telekom-results archive/Deutsche_Telekom_$(date +%Y%m%d_%H%M%S)
-          cp -r bitdefender-results archive/Bitdefender_$(date +%Y%m%d_%H%M%S)
+          if [ -d "artifacts/deutsche-telekom-results" ]; then
+            cp -r artifacts/deutsche-telekom-results archive/Deutsche_Telekom_$(date +%Y%m%d_%H%M%S)
+          fi
+          if [ -d "artifacts/bitdefender-results" ]; then
+            cp -r artifacts/bitdefender-results archive/Bitdefender_$(date +%Y%m%d_%H%M%S)
+          fi
           tar -czf archive_$(date +%Y%m%d_%H%M%S).tar.gz archive/
 
       - name: Send archive notification to Discord
@@ -173,7 +180,8 @@ jobs:
           curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"## Subdomain Monitoring Results Archive\\n\\nArchive created for the latest scan run.\\n\\nTimestamp: $(date)\"}" "$DISCORD_WEBHOOK_ARCHIVE"
 
       - name: Upload archive
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: subdomain-monitoring-archive
           path: archive_*.tar.gz
+EOF

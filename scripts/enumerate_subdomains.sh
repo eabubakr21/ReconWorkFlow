@@ -16,12 +16,69 @@ echo "[*] Repository root: $REPO_ROOT"
 echo "[*] Working directory: $(pwd)"
 echo "[*] Wildcards file: $WILDCARDS_FILE"
 
-# Check if wildcards file exists
+# Create organization directory if it doesn't exist
+mkdir -p "${REPO_ROOT}/${ORG}"
+
+# Check if wildcards file exists, create it if it doesn't
 if [ ! -f "$WILDCARDS_FILE" ]; then
     echo "[!] Wildcards file not found: $WILDCARDS_FILE"
-    echo "[!] Repository structure:"
-    find "$REPO_ROOT" -type f -name "*.txt" | head -20
-    exit 1
+    echo "[*] Creating wildcards file with default content..."
+    
+    # Create default wildcards based on organization
+    if [ "$ORG" = "Deutsche_Telekom" ]; then
+        cat > "$WILDCARDS_FILE" << EOF
+telekom.de
+telekom.net
+telekom.com
+t-systems.com
+open-telekom-cloud.com
+otc-service.com
+EOF
+    elif [ "$ORG" = "Bitdefender" ]; then
+        cat > "$WILDCARDS_FILE" << EOF
+bitdefender.com
+bitdefender.net
+horangi.com
+EOF
+    else
+        echo "[!] Unknown organization: $ORG"
+        exit 1
+    fi
+    
+    echo "[*] Created wildcards file: $WILDCARDS_FILE"
+fi
+
+# Create out_of_scope file if it doesn't exist
+if [ ! -f "$OUT_OF_SCOPE_FILE" ]; then
+    echo "[*] Creating out_of_scope file with default content..."
+    
+    # Create default out_of_scope based on organization
+    if [ "$ORG" = "Deutsche_Telekom" ]; then
+        cat > "$OUT_OF_SCOPE_FILE" << EOF
+*.reverse.open-telekom-cloud.com
+EOF
+    elif [ "$ORG" = "Bitdefender" ]; then
+        cat > "$OUT_OF_SCOPE_FILE" << EOF
+lsems.gravityzone.bitdefender.com
+ssems.gravityzone.bitdefender.com
+community.bitdefender.com
+resellerportal.bitdefender.com
+stats.bitdefender.com
+sstats.bitdefender.com
+brand.bitdefender.com
+partner-marketing.bitdefender.com
+businessinsights.bitdefender.com
+businessemail.bitdefender.com
+businessresources.bitdefender.com
+oemhub.bitdefender.com
+oemresources.bitdefender.com
+crp.bitdefender.com
+telcosuccess.bitdefender.com
+demo.bitdefender.com
+EOF
+    fi
+    
+    echo "[*] Created out_of_scope file: $OUT_OF_SCOPE_FILE"
 fi
 
 # Create subfinder config directory and file

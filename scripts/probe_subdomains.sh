@@ -18,8 +18,8 @@ if [ ! -f "${RESULTS_DIR}/all_subdomains.txt" ] || [ ! -s "${RESULTS_DIR}/all_su
     exit 0
 fi
 
-# Probe subdomains
-cat "${RESULTS_DIR}/all_subdomains.txt" | ~/local/bin/httpx-pd -ports 80,443,8080,8000,8888,8443,9443 -threads 200 -silent > "${RESULTS_DIR}/live_subdomains.txt" 2>/dev/null || echo "[!] httpx encountered issues"
+# Probe subdomains with timeout
+timeout 1800 cat "${RESULTS_DIR}/all_subdomains.txt" | ~/local/bin/httpx-pd -ports 80,443,8080,8000,8888,8443,9443 -threads 50 -silent > "${RESULTS_DIR}/live_subdomains.txt" 2>/dev/null || echo "[!] httpx encountered issues or timed out"
 
 # Compare with previous results
 PREVIOUS_RESULTS="${RESULTS_DIR}/previous_live_subdomains.txt"
@@ -32,9 +32,15 @@ if [ -f "$PREVIOUS_RESULTS" ]; then
     # Send new subdomains to Discord if any
     if [ -s "$NEW_SUBDOMAINS" ]; then
         echo "[*] Sending new subdomains to Discord..."
-        DISCORD_MESSAGE="## New Live Subdomains Found for $ORG\n\n\`\`\`\n$(cat "$NEW_SUBDOMAINS")\n\`\`\`"
         
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+        # Limit the number of subdomains to send to avoid hitting Discord limits
+        SUBDOMAINS_TO_SEND=$(head -20 "$NEW_SUBDOMAINS")
+        DISCORD_MESSAGE="## New Live Subdomains Found for $ORG\n\n\`\`\`\n$SUBDOMAINS_TO_SEND\n\`\`\`"
+        
+        # Escape special characters for JSON
+        DISCORD_MESSAGE_JSON=$(echo "$DISCORD_MESSAGE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+        
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE_JSON\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
     else
         echo "[*] No new subdomains found."
     fi
@@ -42,10 +48,14 @@ else
     echo "[*] No previous results found. All subdomains are considered new."
     cp "${RESULTS_DIR}/live_subdomains.txt" "$NEW_SUBDOMAINS"
     
-    # Send all subdomains to Discord
-    DISCORD_MESSAGE="## Initial Live Subdomains for $ORG\n\n\`\`\`\n$(cat "$NEW_SUBDOMAINS")\n\`\`\`"
+    # Limit the number of subdomains to send to avoid hitting Discord limits
+    SUBDOMAINS_TO_SEND=$(head -20 "$NEW_SUBDOMAINS")
+    DISCORD_MESSAGE="## Initial Live Subdomains for $ORG\n\n\`\`\`\n$SUBDOMAINS_TO_SEND\n\`\`\`"
     
-    curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+    # Escape special characters for JSON
+    DISCORD_MESSAGE_JSON=$(echo "$DISCORD_MESSAGE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+    
+    curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE_JSON\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
 fi
 
 # Update previous results for next run

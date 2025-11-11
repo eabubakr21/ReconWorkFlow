@@ -16,7 +16,7 @@ vendor/
 # Go workspace file
 go.work
 
-# Subdomain enumeration results
+# Subdomain enumeration results (but not in organization directories)
 *.txt
 *.json
 *.csv
@@ -28,3 +28,7 @@ httpx*
 
 # API keys and secrets
 .env
+
+# Exceptions for organization directories
+!Deutsche_Telekom/*.txt
+!Bitdefender/*.txt

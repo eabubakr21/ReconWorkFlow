@@ -45,4 +45,7 @@ cd ..
 mkdir -p ~/.config/subfinder
 subfinder -config ~/.config/subfinder/provider-config.yaml -d example.com > /dev/null 2>&1 || true
 
+# Add ~/local/bin to PATH for the current session
+export PATH="$PATH:~/local/bin"
+
 echo "[+] Setup complete!"

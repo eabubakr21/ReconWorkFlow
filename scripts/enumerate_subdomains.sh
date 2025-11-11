@@ -9,6 +9,14 @@ RESULTS_DIR="${ORG}/results"
 mkdir -p "$RESULTS_DIR"
 
 echo "[*] Starting subdomain enumeration for $ORG..."
+echo "[*] Working directory: $(pwd)"
+echo "[*] Wildcards file: $WILDCARDS_FILE"
+
+# Check if wildcards file exists
+if [ ! -f "$WILDCARDS_FILE" ]; then
+    echo "[!] Wildcards file not found: $WILDCARDS_FILE"
+    exit 1
+fi
 
 # Create subfinder config directory and file
 mkdir -p ~/.config/subfinder
@@ -41,7 +49,7 @@ echo "[*] Running subfinder..."
 subfinder -all -t 200 -silent -recursive -dL "$WILDCARDS_FILE" > "${RESULTS_DIR}/subfinder.txt" 2>/dev/null || echo "[!] Subfinder encountered issues"
 
 echo "[*] Running findomain..."
-~/local/bin/findomain -quiet -f "$WILDCARDS_FILE" > "${RESULTS_DIR}/findomain.txt" 2>/dev/null || echo "[!] Findomain encountered issues"
+findomain -quiet -f "$WILDCARDS_FILE" > "${RESULTS_DIR}/findomain.txt" 2>/dev/null || echo "[!] Findomain encountered issues"
 
 echo "[*] Running assetfinder..."
 cat "$WILDCARDS_FILE" | assetfinder -subs-only > "${RESULTS_DIR}/assetfinder.txt" 2>/dev/null || echo "[!] Assetfinder encountered issues"

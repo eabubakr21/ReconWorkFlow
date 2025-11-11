@@ -1,3 +1,4 @@
+cat > .github/workflows/subdomain_monitoring.yml << 'EOF'
 name: Subdomain Monitoring Workflow
 
 on:
@@ -135,6 +136,14 @@ jobs:
           echo "~/go/bin" >> $GITHUB_PATH
           echo "~/local/bin" >> $GITHUB_PATH
 
+      - name: Debug repository structure
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Repository structure:"
+          find . -type f -name "*.txt" | head -20
+          echo "Checking for Bitdefender directory:"
+          ls -la Bitdefender/ || echo "Directory not found"
+
       - name: Run workflow for Bitdefender
         env:
           BEVIGIL_API_KEY: ${{ secrets.BEVIGIL_API_KEY }}
@@ -191,3 +200,4 @@ jobs:
         with:
           name: subdomain-monitoring-archive
           path: archive_*.tar.gz
+EOF

@@ -3,9 +3,11 @@
 set -e  # Exit on any error
 
 ORG=$1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 WEBHOOK_VAR="DISCORD_WEBHOOK_${ORG^^}"
 WEBHOOK_URL="${!WEBHOOK_VAR}"
-RESULTS_DIR="${ORG}/results"
+RESULTS_DIR="${REPO_ROOT}/${ORG}/results"
 mkdir -p "$RESULTS_DIR"
 
 echo "[*] Scanning with Nuclei for $ORG..."

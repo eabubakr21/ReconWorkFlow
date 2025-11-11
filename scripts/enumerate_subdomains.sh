@@ -3,18 +3,24 @@
 set -e  # Exit on any error
 
 ORG=$1
-WILDCARDS_FILE="${ORG}/wildcards.txt"
-OUT_OF_SCOPE_FILE="${ORG}/out_of_scope.txt"
-RESULTS_DIR="${ORG}/results"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+WILDCARDS_FILE="${REPO_ROOT}/${ORG}/wildcards.txt"
+OUT_OF_SCOPE_FILE="${REPO_ROOT}/${ORG}/out_of_scope.txt"
+RESULTS_DIR="${REPO_ROOT}/${ORG}/results"
 mkdir -p "$RESULTS_DIR"
 
 echo "[*] Starting subdomain enumeration for $ORG..."
+echo "[*] Script directory: $SCRIPT_DIR"
+echo "[*] Repository root: $REPO_ROOT"
 echo "[*] Working directory: $(pwd)"
 echo "[*] Wildcards file: $WILDCARDS_FILE"
 
 # Check if wildcards file exists
 if [ ! -f "$WILDCARDS_FILE" ]; then
     echo "[!] Wildcards file not found: $WILDCARDS_FILE"
+    echo "[!] Repository structure:"
+    find "$REPO_ROOT" -type f -name "*.txt" | head -20
     exit 1
 fi
 
@@ -31,7 +37,7 @@ if [ ! -f ~/.config/subfinder/provider-config.yaml ]; then
 fi
 
 # Update subfinder config
-cp scripts/subfinder-config.yaml ~/.config/subfinder/provider-config.yaml
+cp "${SCRIPT_DIR}/subfinder-config.yaml" ~/.config/subfinder/provider-config.yaml
 
 # Replace placeholders with actual secret values
 sed -i "s/BEVIGIL_API_KEY/${BEVIGIL_API_KEY}/g" ~/.config/subfinder/provider-config.yaml
@@ -55,8 +61,8 @@ echo "[*] Running assetfinder..."
 cat "$WILDCARDS_FILE" | assetfinder -subs-only > "${RESULTS_DIR}/assetfinder.txt" 2>/dev/null || echo "[!] Assetfinder encountered issues"
 
 echo "[*] Running SubEnum..."
-if [ -f "./SubEnum/subenum.sh" ]; then
-    ./SubEnum/subenum.sh -l "$WILDCARDS_FILE" -u wayback,crt,abuseipdb,Amass > "${RESULTS_DIR}/subenum.txt" 2>/dev/null || echo "[!] SubEnum encountered issues"
+if [ -f "${REPO_ROOT}/SubEnum/subenum.sh" ]; then
+    "${REPO_ROOT}/SubEnum/subenum.sh" -l "$WILDCARDS_FILE" -u wayback,crt,abuseipdb,Amass > "${RESULTS_DIR}/subenum.txt" 2>/dev/null || echo "[!] SubEnum encountered issues"
 else
     echo "[!] SubEnum script not found"
 fi

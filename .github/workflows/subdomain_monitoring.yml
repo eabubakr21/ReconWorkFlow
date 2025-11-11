@@ -73,6 +73,14 @@ jobs:
           echo "~/go/bin" >> $GITHUB_PATH
           echo "~/local/bin" >> $GITHUB_PATH
 
+      - name: Debug repository structure
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Repository structure:"
+          find . -type f -name "*.txt" | head -20
+          echo "Checking for Deutsche_Telekom directory:"
+          ls -la Deutsche_Telekom/ || echo "Directory not found"
+
       - name: Run workflow for Deutsche Telekom
         env:
           BEVIGIL_API_KEY: ${{ secrets.BEVIGIL_API_KEY }}

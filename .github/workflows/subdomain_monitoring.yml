@@ -38,6 +38,7 @@ jobs:
             /usr/local/bin/httpx-pd
             /usr/bin/findomain
             SubEnum
+            ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
 
   deutsche_telekom:
@@ -66,6 +67,7 @@ jobs:
             /usr/local/bin/httpx-pd
             /usr/bin/findomain
             SubEnum
+            ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
 
       - name: Add tools to PATH
@@ -120,6 +122,7 @@ jobs:
             /usr/local/bin/httpx-pd
             /usr/bin/findomain
             SubEnum
+            ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
 
       - name: Add tools to PATH

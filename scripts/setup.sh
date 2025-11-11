@@ -38,8 +38,11 @@ chmod +x setup.sh
 ./setup.sh
 cd ..
 
+# Create a dummy go.sum file for caching purposes
+touch go.sum
+
 # Create subfinder config directory and file
 mkdir -p ~/.config/subfinder
-subfinder
+subfinder -config ~/.config/subfinder/provider-config.yaml -d example.com > /dev/null 2>&1 || true
 
 echo "[+] Setup complete!"

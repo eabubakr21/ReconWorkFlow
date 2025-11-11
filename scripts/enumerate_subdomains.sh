@@ -10,6 +10,12 @@ mkdir -p "$RESULTS_DIR"
 
 echo "[*] Starting subdomain enumeration for $ORG..."
 
+# Create subfinder config directory and file
+mkdir -p ~/.config/subfinder
+
+# Run subfinder once to create the default config file
+subfinder -config ~/.config/subfinder/provider-config.yaml -d example.com > /dev/null 2>&1 || true
+
 # Update subfinder config
 cp scripts/subfinder-config.yaml ~/.config/subfinder/provider-config.yaml
 

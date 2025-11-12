@@ -22,24 +22,60 @@ NUCLEI_RESULTS="${RESULTS_DIR}/nuclei_results.txt"
 
 if [ -f "$NEW_SUBDOMAINS" ] && [ -s "$NEW_SUBDOMAINS" ]; then
     echo "[*] Running Nuclei on new subdomains..."
+    
+    # Run Nuclei with immediate notification on findings
     timeout 1800 nuclei -t ~/nuclei-templates/http -l "$NEW_SUBDOMAINS" -es info -mhe 5 -stats \
     -H "X-Forwarded-For: 127.0.0.1" \
     -H "X-Forwarded-Host: 127.0.0.1" \
     -H "X-Forwarded: 127.0.0.1" \
-    -H "Forwarded-For: 127.0.0.1" > "$NUCLEI_RESULTS" 2>/dev/null || echo "[!] Nuclei encountered issues or timed out"
+    -H "Forwarded-For: 127.0.0.1" \
+    -o "${RESULTS_DIR}/nuclei_results.txt" \
+    -j "${RESULTS_DIR}/nuclei_results.json" 2>/dev/null || echo "[!] Nuclei encountered issues or timed out"
     
-    # Send Nuclei findings to Discord if any
-    if [ -s "$NUCLEI_RESULTS" ]; then
-        echo "[*] Sending Nuclei findings to Discord..."
+    # Send immediate notifications for each finding
+    if [ -f "${RESULTS_DIR}/nuclei_results.json" ] && [ -s "${RESULTS_DIR}/nuclei_results.json" ]; then
+        echo "[*] Processing Nuclei findings..."
         
-        # Limit the number of findings to send to avoid hitting Discord limits
-        FINDINGS_TO_SEND=$(head -20 "$NUCLEI_RESULTS")
-        DISCORD_MESSAGE="## Nuclei Scan Results for $ORG\n\n\`\`\`\n$FINDINGS_TO_SEND\n\`\`\`"
-        
-        # Escape special characters for JSON
-        DISCORD_MESSAGE_JSON=$(echo "$DISCORD_MESSAGE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-        
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE_JSON\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+        # Use jq to parse JSON and send notifications for each finding
+        if command -v jq >/dev/null 2>&1; then
+            # Parse JSON and send notification for each finding
+            jq -c '.[]' "${RESULTS_DIR}/nuclei_results.json" | while read -r finding; do
+                # Extract relevant information
+                TEMPLATE_ID=$(echo "$finding" | jq -r '.template-id // "unknown"')
+                SEVERITY=$(echo "$finding" | jq -r '.info.severity // "unknown"')
+                HOST=$(echo "$finding" | jq -r '.host // "unknown"')
+                NAME=$(echo "$finding" | jq -r '.info.name // "unknown"')
+                DESCRIPTION=$(echo "$finding" | jq -r '.info.description // "No description"')
+                
+                # Create Discord message
+                DISCORD_MESSAGE="## Nuclei Finding for $ORG\n\n**Template:** $TEMPLATE_ID\n**Severity:** $SEVERITY\n**Host:** $HOST\n**Name:** $NAME\n**Description:** $DESCRIPTION"
+                
+                # Create a temporary file with the JSON payload
+                echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
+                
+                # Send the Discord notification
+                curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+                
+                # Clean up
+                rm -f /tmp/discord_payload.json
+                
+                # Small delay to avoid rate limiting
+                sleep 2
+            done
+        else
+            # Fallback if jq is not available - send all findings at once
+            FINDINGS_TO_SEND=$(head -20 "${RESULTS_DIR}/nuclei_results.txt")
+            DISCORD_MESSAGE="## Nuclei Scan Results for $ORG\n\n\`\`\`\n$FINDINGS_TO_SEND\n\`\`\`"
+            
+            # Create a temporary file with the JSON payload
+            echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
+            
+            # Send the Discord notification
+            curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+            
+            # Clean up
+            rm -f /tmp/discord_payload.json
+        fi
     else
         echo "[*] No vulnerabilities found by Nuclei."
     fi

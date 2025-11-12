@@ -40,11 +40,11 @@ jobs:
             ~/.config/subfinder
           key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
 
-  deutsche_telekom:
+  deutsche_telekom_enumeration:
     runs-on: ubuntu-latest
     needs: setup
     if: always()
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 180  # 3 hours
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
           echo "~/go/bin" >> $GITHUB_PATH
           echo "~/local/bin" >> $GITHUB_PATH
 
-      - name: Run workflow for Deutsche Telekom
+      - name: Run subdomain enumeration for Deutsche Telekom
         env:
           BEVIGIL_API_KEY: ${{ secrets.BEVIGIL_API_KEY }}
           PDCP_API_KEY: ${{ secrets.PDCP_API_KEY }}
@@ -85,21 +85,20 @@ jobs:
           SHODAN_API_KEY: ${{ secrets.SHODAN_API_KEY }}
           VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
           ZOOMEYE_API_KEY: ${{ secrets.ZOOMEYE_API_KEY }}
-          DISCORD_WEBHOOK_DEUTSCHE_TELEKOM: ${{ secrets.DISCORD_WEBHOOK_TELEKOM }}
         run: |
-          ./scripts/run_workflow.sh "Deutsche_Telekom"
+          ./scripts/enumerate_subdomains.sh "Deutsche_Telekom"
 
-      - name: Upload results
+      - name: Upload enumeration results
         uses: actions/upload-artifact@v4
         with:
-          name: deutsche-telekom-results
+          name: deutsche-telekom-enumeration
           path: Deutsche_Telekom/results/
 
-  bitdefender:
+  deutsche_telekom_probing:
     runs-on: ubuntu-latest
-    needs: setup
+    needs: deutsche_telekom_enumeration
     if: always()
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 180  # 3 hours
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -129,7 +128,111 @@ jobs:
           echo "~/go/bin" >> $GITHUB_PATH
           echo "~/local/bin" >> $GITHUB_PATH
 
-      - name: Run workflow for Bitdefender
+      - name: Download enumeration results
+        uses: actions/download-artifact@v4
+        with:
+          name: deutsche-telekom-enumeration
+          path: Deutsche_Telekom/results/
+
+      - name: Run probing for Deutsche Telekom
+        env:
+          DISCORD_WEBHOOK_DEUTSCHE_TELEKOM: ${{ secrets.DISCORD_WEBHOOK_TELEKOM }}
+        run: |
+          ./scripts/probe_subdomains.sh "Deutsche_Telekom"
+
+      - name: Upload probing results
+        uses: actions/upload-artifact@v4
+        with:
+          name: deutsche-telekom-probing
+          path: Deutsche_Telekom/results/
+
+  deutsche_telekom_scanning:
+    runs-on: ubuntu-latest
+    needs: deutsche_telekom_probing
+    if: always()
+    timeout-minutes: 180  # 3 hours
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Restore cached tools
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/bin
+            ~/local/bin
+            SubEnum
+            ~/.config/subfinder
+          key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Add tools to PATH
+        run: |
+          echo "~/go/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
+
+      - name: Download probing results
+        uses: actions/download-artifact@v4
+        with:
+          name: deutsche-telekom-probing
+          path: Deutsche_Telekom/results/
+
+      - name: Run Nuclei scanning for Deutsche Telekom
+        env:
+          DISCORD_WEBHOOK_DEUTSCHE_TELEKOM: ${{ secrets.DISCORD_WEBHOOK_TELEKOM }}
+        run: |
+          ./scripts/scan_with_nuclei.sh "Deutsche_Telekom"
+
+      - name: Upload scanning results
+        uses: actions/upload-artifact@v4
+        with:
+          name: deutsche-telekom-scanning
+          path: Deutsche_Telekom/results/
+
+  bitdefender_enumeration:
+    runs-on: ubuntu-latest
+    needs: setup
+    if: always()
+    timeout-minutes: 180  # 3 hours
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Restore cached tools
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/bin
+            ~/local/bin
+            SubEnum
+            ~/.config/subfinder
+          key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Add tools to PATH
+        run: |
+          echo "~/go/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
+
+      - name: Run subdomain enumeration for Bitdefender
         env:
           BEVIGIL_API_KEY: ${{ secrets.BEVIGIL_API_KEY }}
           PDCP_API_KEY: ${{ secrets.PDCP_API_KEY }}
@@ -140,25 +243,128 @@ jobs:
           SHODAN_API_KEY: ${{ secrets.SHODAN_API_KEY }}
           VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
           ZOOMEYE_API_KEY: ${{ secrets.ZOOMEYE_API_KEY }}
-          DISCORD_WEBHOOK_BITDEFENDER: ${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}
         run: |
-          ./scripts/run_workflow.sh "Bitdefender"
+          ./scripts/enumerate_subdomains.sh "Bitdefender"
 
-      - name: Upload results
+      - name: Upload enumeration results
         uses: actions/upload-artifact@v4
         with:
-          name: bitdefender-results
+          name: bitdefender-enumeration
+          path: Bitdefender/results/
+
+  bitdefender_probing:
+    runs-on: ubuntu-latest
+    needs: bitdefender_enumeration
+    if: always()
+    timeout-minutes: 180  # 3 hours
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Restore cached tools
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/bin
+            ~/local/bin
+            SubEnum
+            ~/.config/subfinder
+          key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Add tools to PATH
+        run: |
+          echo "~/go/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
+
+      - name: Download enumeration results
+        uses: actions/download-artifact@v4
+        with:
+          name: bitdefender-enumeration
+          path: Bitdefender/results/
+
+      - name: Run probing for Bitdefender
+        env:
+          DISCORD_WEBHOOK_BITDEFENDER: ${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}
+        run: |
+          ./scripts/probe_subdomains.sh "Bitdefender"
+
+      - name: Upload probing results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitdefender-probing
+          path: Bitdefender/results/
+
+  bitdefender_scanning:
+    runs-on: ubuntu-latest
+    needs: bitdefender_probing
+    if: always()
+    timeout-minutes: 180  # 3 hours
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Restore cached tools
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/bin
+            ~/local/bin
+            SubEnum
+            ~/.config/subfinder
+          key: ${{ runner.os }}-tools-${{ hashFiles('scripts/setup.sh') }}
+
+      - name: Add tools to PATH
+        run: |
+          echo "~/go/bin" >> $GITHUB_PATH
+          echo "~/local/bin" >> $GITHUB_PATH
+
+      - name: Download probing results
+        uses: actions/download-artifact@v4
+        with:
+          name: bitdefender-probing
+          path: Bitdefender/results/
+
+      - name: Run Nuclei scanning for Bitdefender
+        env:
+          DISCORD_WEBHOOK_BITDEFENDER: ${{ secrets.DISCORD_WEBHOOK_BITDEFENDER }}
+        run: |
+          ./scripts/scan_with_nuclei.sh "Bitdefender"
+
+      - name: Upload scanning results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitdefender-scanning
           path: Bitdefender/results/
 
   archive:
     runs-on: ubuntu-latest
-    needs: [deutsche_telekom, bitdefender]
+    needs: [deutsche_telekom_scanning, bitdefender_scanning]
     if: always()
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -166,11 +372,23 @@ jobs:
       - name: Create archive
         run: |
           mkdir -p archive
-          if [ -d "artifacts/deutsche-telekom-results" ]; then
-            cp -r artifacts/deutsche-telekom-results archive/Deutsche_Telekom_$(date +%Y%m%d_%H%M%S)
+          if [ -d "artifacts/deutsche-telekom-enumeration" ]; then
+            cp -r artifacts/deutsche-telekom-enumeration archive/Deutsche_Telekom_$(date +%Y%m%d_%H%M%S)
           fi
-          if [ -d "artifacts/bitdefender-results" ]; then
-            cp -r artifacts/bitdefender-results archive/Bitdefender_$(date +%Y%m%d_%H%M%S)
+          if [ -d "artifacts/deutsche-telekom-probing" ]; then
+            cp -r artifacts/deutsche-telekom-probing archive/Deutsche_Telekom_probing_$(date +%Y%m%d_%H%M%S)
+          fi
+          if [ -d "artifacts/deutsche-telekom-scanning" ]; then
+            cp -r artifacts/deutsche-telekom-scanning archive/Deutsche_Telekom_scanning_$(date +%Y%m%d_%H%M%S)
+          fi
+          if [ -d "artifacts/bitdefender-enumeration" ]; then
+            cp -r artifacts/bitdefender-enumeration archive/Bitdefender_$(date +%Y%m%d_%H%M%S)
+          fi
+          if [ -d "artifacts/bitdefender-probing" ]; then
+            cp -r artifacts/bitdefender-probing archive/Bitdefender_probing_$(date +%Y%m%d_%H%M%S)
+          fi
+          if [ -d "artifacts/bitdefender-scanning" ]; then
+            cp -r artifacts/bitdefender-scanning archive/Bitdefender_scanning_$(date +%Y%m%d_%H%M%S)
           fi
           tar -czf archive_$(date +%Y%m%d_%H%M%S).tar.gz archive/
 

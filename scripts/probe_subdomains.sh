@@ -18,7 +18,7 @@ if [ ! -f "${RESULTS_DIR}/all_subdomains.txt" ] || [ ! -s "${RESULTS_DIR}/all_su
     exit 0
 fi
 
-# Probe subdomains with timeout
+# Probe subdomains with timeout and reduced thread count
 timeout 1800 cat "${RESULTS_DIR}/all_subdomains.txt" | ~/local/bin/httpx-pd -ports 80,443,8080,8000,8888,8443,9443 -threads 50 -silent > "${RESULTS_DIR}/live_subdomains.txt" 2>/dev/null || echo "[!] httpx encountered issues or timed out"
 
 # Compare with previous results
@@ -35,12 +35,18 @@ if [ -f "$PREVIOUS_RESULTS" ]; then
         
         # Limit the number of subdomains to send to avoid hitting Discord limits
         SUBDOMAINS_TO_SEND=$(head -20 "$NEW_SUBDOMAINS")
+        
+        # Create a properly formatted Discord message
         DISCORD_MESSAGE="## New Live Subdomains Found for $ORG\n\n\`\`\`\n$SUBDOMAINS_TO_SEND\n\`\`\`"
         
-        # Escape special characters for JSON
-        DISCORD_MESSAGE_JSON=$(echo "$DISCORD_MESSAGE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+        # Create a temporary file with the JSON payload
+        echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
         
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE_JSON\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+        # Send the Discord notification
+        curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+        
+        # Clean up
+        rm -f /tmp/discord_payload.json
     else
         echo "[*] No new subdomains found."
     fi
@@ -50,12 +56,18 @@ else
     
     # Limit the number of subdomains to send to avoid hitting Discord limits
     SUBDOMAINS_TO_SEND=$(head -20 "$NEW_SUBDOMAINS")
+    
+    # Create a properly formatted Discord message
     DISCORD_MESSAGE="## Initial Live Subdomains for $ORG\n\n\`\`\`\n$SUBDOMAINS_TO_SEND\n\`\`\`"
     
-    # Escape special characters for JSON
-    DISCORD_MESSAGE_JSON=$(echo "$DISCORD_MESSAGE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+    # Create a temporary file with the JSON payload
+    echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
     
-    curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DISCORD_MESSAGE_JSON\"}" "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+    # Send the Discord notification
+    curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
+    
+    # Clean up
+    rm -f /tmp/discord_payload.json
 fi
 
 # Update previous results for next run

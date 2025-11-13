@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip curl wget git
+          sudo apt-get install -y unzip curl wget git jq
           pip install 'httpx[cli]'
           ./scripts/setup.sh
 
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     if: always()
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: deutsche_telekom_enumeration
     if: always() && (needs.deutsche_telekom_enumeration.result == 'success' || needs.deutsche_telekom_enumeration.outputs.completed == 'true')
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -180,7 +180,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: deutsche_telekom_probing
     if: always() && (needs.deutsche_telekom_probing.result == 'success' || needs.deutsche_telekom_probing.outputs.completed == 'true')
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     if: always()
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -314,7 +314,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: bitdefender_enumeration
     if: always() && (needs.bitdefender_enumeration.result == 'success' || needs.bitdefender_enumeration.outputs.completed == 'true')
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -381,7 +381,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: bitdefender_probing
     if: always() && (needs.bitdefender_probing.result == 'success' || needs.bitdefender_probing.outputs.completed == 'true')
-    timeout-minutes: 180  # 3 hours
+    timeout-minutes: 120  # 2 hours
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -490,22 +490,3 @@ jobs:
           name: subdomain-monitoring-archive
           path: archive_*.tar.gz
           retention-days: 30
-
-  cleanup:
-    runs-on: ubuntu-latest
-    if: github.event.schedule == '0 0 1 * *'  # Run on the 1st of every month
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Clean up old results
-        run: |
-          ./scripts/cleanup_old_results.sh
-
-      - name: Commit cleanup
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add -A
-          git diff --staged --quiet || git commit -m "Clean up old results [skip ci]"
-          git push

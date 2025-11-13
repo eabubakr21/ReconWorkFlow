@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     if: always()
-    timeout-minutes: 120  # 2 hours
+    timeout-minutes: 90  # 1.5 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: deutsche_telekom_enumeration
     if: always() && (needs.deutsche_telekom_enumeration.result == 'success' || needs.deutsche_telekom_enumeration.outputs.completed == 'true')
-    timeout-minutes: 120  # 2 hours
+    timeout-minutes: 180  # 3 hours for first run
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     if: always()
-    timeout-minutes: 120  # 2 hours
+    timeout-minutes: 90  # 1.5 hours
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -314,7 +314,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: bitdefender_enumeration
     if: always() && (needs.bitdefender_enumeration.result == 'success' || needs.bitdefender_enumeration.outputs.completed == 'true')
-    timeout-minutes: 120  # 2 hours
+    timeout-minutes: 180  # 3 hours for first run
     outputs:
       completed: ${{ steps.check.outputs.completed }}
     steps:
@@ -482,7 +482,12 @@ jobs:
         env:
           DISCORD_WEBHOOK_ARCHIVE: ${{ secrets.DISCORD_WEBHOOK_ARCHIVE }}
         run: |
-          curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"## Subdomain Monitoring Results Archive\\n\\nArchive created for the latest scan run.\\n\\nTimestamp: $(date)\"}" "$DISCORD_WEBHOOK_ARCHIVE"
+          # Create formatted notification for each org
+          DEUTSCHE_TELEKOM_MSG=$(./scripts/create_archive_notification.sh "Deutsche Telekom")
+          BITDEFENDER_MSG=$(./scripts/create_archive_notification.sh "Bitdefender")
+          
+          # Send combined notification
+          curl -H "Content-Type: application/json" -X POST -d "{\"content\":\"$DEUTSCHE_TELEKOM_MSG\n\n$BITDEFENDER_MSG\"}" "$DISCORD_WEBHOOK_ARCHIVE" 2>/dev/null || echo "[!] Error sending Discord notification"
 
       - name: Upload archive
         uses: actions/upload-artifact@v4

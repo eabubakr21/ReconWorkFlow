@@ -13,8 +13,8 @@ mkdir -p "$RESULTS_DIR"
 echo "[*] Scanning with Nuclei for $ORG..."
 
 # Update Nuclei templates with timeout
-timeout 600 nuclei --update 2>/dev/null || echo "[!] Error updating Nuclei templates or timed out"
-timeout 600 nuclei -ut 2>/dev/null || echo "[!] Error updating Nuclei templates or timed out"
+timeout 300 nuclei --update 2>/dev/null || echo "[!] Error updating Nuclei templates or timed out"
+timeout 300 nuclei -ut 2>/dev/null || echo "[!] Error updating Nuclei templates or timed out"
 
 # Scan new subdomains with Nuclei
 NEW_SUBDOMAINS="${RESULTS_DIR}/new_subdomains.txt"
@@ -45,15 +45,14 @@ if [ -f "$NEW_SUBDOMAINS" ] && [ -s "$NEW_SUBDOMAINS" ]; then
                 SEVERITY=$(echo "$finding" | jq -r '.info.severity // "unknown"')
                 HOST=$(echo "$finding" | jq -r '.host // "unknown"')
                 NAME=$(echo "$finding" | jq -r '.info.name // "unknown"')
-                DESCRIPTION=$(echo "$finding" | jq -r '.info.description // "No description"')
                 
-                # Create Discord message
-                DISCORD_MESSAGE="## Nuclei Finding for $ORG\n\n**Template:** $TEMPLATE_ID\n**Severity:** $SEVERITY\n**Host:** $HOST\n**Name:** $NAME\n**Description:** $DESCRIPTION"
+                # Create Discord message with smaller headline
+                DISCORD_MESSAGE="🚨 **Nuclei Finding for $ORG**\n\n**Template:** $TEMPLATE_ID\n**Severity:** $SEVERITY\n**Host:** $HOST\n**Name:** $NAME"
                 
                 # Create a temporary file with the JSON payload
                 echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
                 
-                # Send the Discord notification
+                # Send the Discord notification immediately
                 curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
                 
                 # Clean up
@@ -64,8 +63,8 @@ if [ -f "$NEW_SUBDOMAINS" ] && [ -s "$NEW_SUBDOMAINS" ]; then
             done
         else
             # Fallback if jq is not available - send all findings at once
-            FINDINGS_TO_SEND=$(head -20 "${RESULTS_DIR}/nuclei_results.txt")
-            DISCORD_MESSAGE="## Nuclei Scan Results for $ORG\n\n\`\`\`\n$FINDINGS_TO_SEND\n\`\`\`"
+            FINDINGS_TO_SEND=$(head -10 "${RESULTS_DIR}/nuclei_results.txt")
+            DISCORD_MESSAGE="🚨 **Nuclei Findings for $ORG**\n\n$(printf '%s\n' $FINDINGS_TO_SEND | head -10 | sed 's/^/  /')"
             
             # Create a temporary file with the JSON payload
             echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json

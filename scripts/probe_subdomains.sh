@@ -31,7 +31,7 @@ if [ -f "$PREVIOUS_RESULTS" ]; then
     # Get only subdomains that weren't previously found to be live
     cat "${RESULTS_DIR}/all_subdomains.txt" | anew "$PREVIOUS_RESULTS" > "${RESULTS_DIR}/potential_new_subdomains.txt" || echo "[!] Error comparing with previous results"
     
-    # Use only the potentially new subdomains for probing
+    # Use only potentially new subdomains for probing
     SUBDOMAINS_TO_PROBE="${RESULTS_DIR}/potential_new_subdomains.txt"
     POTENTIAL_NEW_COUNT=$(wc -l < "$SUBDOMAINS_TO_PROBE")
     echo "[*] Only probing $POTENTIAL_NEW_COUNT potentially new subdomains (skipping $((TOTAL_SUBDOMAINS - POTENTIAL_NEW_COUNT)) already known)"
@@ -67,7 +67,7 @@ for batch_file in "${TEMP_DIR}"/batch_*; do
         echo "[*] Processing batch $BATCH_COUNT: $(basename "$batch_file")"
         
         # Probe this batch with very aggressive timeout and settings
-        timeout 180 cat "$batch_file" | ~/local/bin/httpx-pd -ports 80,443 -threads 5 -silent -retries 1 -timeout 3 >> "$LIVE_SUBDOMAINS_FILE" 2>/dev/null || echo "[!] Batch $(basename "$batch_file") encountered issues or timed out"
+        timeout 300 cat "$batch_file" | ~/local/bin/httpx-pd -ports 80,443 -threads 5 -silent -retries 1 -timeout 5 >> "$LIVE_SUBDOMAINS_FILE" 2>/dev/null || echo "[!] Batch $(basename "$batch_file") encountered issues or timed out"
         
         # Small delay between batches to avoid rate limiting
         sleep 1
@@ -89,25 +89,26 @@ elif [ -f "$PREVIOUS_RESULTS" ]; then
     SAMPLE_NOTE=" (only probing potentially new subdomains)"
 fi
 
-# If we compared before probing, we already have the new subdomains
+# Now find TRULY new subdomains by comparing live with previous
 if [ -f "$PREVIOUS_RESULTS" ]; then
-    NEW_COUNT=$(wc -l < "$SUBDOMAINS_TO_PROBE")
-    echo "[*] $NEW_COUNT potentially new subdomains to verify"
+    echo "[*] Finding truly new subdomains by comparing live with previous results..."
+    cat "$LIVE_SUBDOMAINS_FILE" | anew "$PREVIOUS_RESULTS" > "$NEW_SUBDOMAINS" || echo "[!] Error finding truly new subdomains"
     
     # Send new subdomains to Discord if any
-    if [ -s "$SUBDOMAINS_TO_PROBE" ]; then
-        echo "[*] Sending new subdomains to Discord..."
+    if [ -s "$NEW_SUBDOMAINS" ]; then
+        echo "[*] Sending TRULY new subdomains to Discord..."
         
         # Limit the number of subdomains to send
-        SUBDOMAINS_TO_SEND=$(head -15 "$SUBDOMAINS_TO_PROBE")
+        SUBDOMAINS_TO_SEND=$(head -15 "$NEW_SUBDOMAINS")
+        NEW_COUNT=$(wc -l < "$NEW_SUBDOMAINS")
         
         # Create a properly formatted Discord message with newlines
-        DISCORD_MESSAGE="🔍 **New Subdomains for $ORG**$SAMPLE_NOTE\n\n$(printf '%s\n' $SUBDOMAINS_TO_SEND | head -15 | sed 's/^/  /')"
+        DISCORD_MESSAGE="🔍 **New Live Subdomains for $ORG**$SAMPLE_NOTE\n\n$NEW_COUNT new subdomains found (showing first 15):\n\n$(printf '%s\n' "$SUBDOMAINS_TO_SEND" | head -15 | sed 's/^/  /')"
         
         # Create a temporary file with the JSON payload
         echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
         
-        # Send the Discord notification
+        # Send Discord notification
         curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
         
         # Clean up
@@ -115,16 +116,10 @@ if [ -f "$PREVIOUS_RESULTS" ]; then
     else
         echo "[*] No new subdomains found."
     fi
-    
-    # Copy all live subdomains to new_subdomains for the next phase
-    cp "$LIVE_SUBDOMAINS_FILE" "$NEW_SUBDOMAINS"
 else
     # First run or sampled run, find new subdomains by comparing with previous live
-    if [ -f "$PREVIOUS_RESULTS" ]; then
-        cat "$LIVE_SUBDOMAINS_FILE" | anew "$PREVIOUS_RESULTS" > "$NEW_SUBDOMAINS" || echo "[!] Error comparing with previous results"
-    else
-        cp "$LIVE_SUBDOMAINS_FILE" "$NEW_SUBDOMAINS"
-    fi
+    echo "[*] Finding new subdomains by comparing with previous live..."
+    cat "$LIVE_SUBDOMAINS_FILE" | anew "$PREVIOUS_RESULTS" > "$NEW_SUBDOMAINS" || echo "[!] Error finding new subdomains"
     
     # Send new subdomains to Discord if any
     if [ -s "$NEW_SUBDOMAINS" ]; then
@@ -132,15 +127,15 @@ else
         
         # Limit the number of subdomains to send
         SUBDOMAINS_TO_SEND=$(head -15 "$NEW_SUBDOMAINS")
-        NEW_COUNT=$(wc -l < "$NEW_SUBDOMAINS")
+        TOTAL_COUNT=$(wc -l < "$NEW_SUBDOMAINS")
         
         # Create a properly formatted Discord message with newlines
-        DISCORD_MESSAGE="🔍 **New Live Subdomains for $ORG**$SAMPLE_NOTE\n\n$NEW_COUNT new subdomains found (showing first 15):\n\n$(printf '%s\n' $SUBDOMAINS_TO_SEND | head -15 | sed 's/^/  /')"
+        DISCORD_MESSAGE="🔍 **New Live Subdomains for $ORG**$SAMPLE_NOTE\n\n$TOTAL_COUNT new subdomains found (showing first 15):\n\n$(printf '%s\n' "$SUBDOMAINS_TO_SEND" | head -15 | sed 's/^/  /')"
         
         # Create a temporary file with the JSON payload
         echo "{\"content\":\"$DISCORD_MESSAGE\"}" > /tmp/discord_payload.json
         
-        # Send the Discord notification
+        # Send Discord notification
         curl -H "Content-Type: application/json" -X POST -d @/tmp/discord_payload.json "$WEBHOOK_URL" 2>/dev/null || echo "[!] Error sending Discord notification"
         
         # Clean up
